@@ -1,0 +1,110 @@
+# typos 用于检查代码和文档中的英文单词拼写错误。
+
+
+[files]
+# 忽略不需要检测的文件
+extend-exclude = ["CHANGELOG.md"]
+ignore-hidden = true  # 忽略隐藏文件
+ignore-vcs = true     # 忽略 .gitignore 中的文件
+ignore-dot = true     # 忽略 .ignore 中的文件
+
+# 检查行为
+[default]
+check-filename = true # 是否检查文件名
+check-file = true     # 是否检查文件内容
+locale = "en"
+binary = false        # 是否检查二进制文件
+unicode = true        # 是否支持 Unicode 标识符
+# 按正则忽略内容（可实现行内 disable 注释）
+extend-ignore-re = [
+    "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",
+    "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on",
+]
+extend-ignore-identifiers-re = []    # 按正则忽略标识符
+extend-ignore-words-re = []          # 按正则忽略单词
+
+[default.extend-words]
+# 常见但拼写检查器容易误报的开发工具名、库名、协议名和缩写。
+
+# Rust 工具链与生态
+actix = "actix"
+anyhow = "anyhow"
+axum = "axum"
+bincode = "bincode"
+bitflags = "bitflags"
+clippy = "clippy"
+dashmap = "dashmap"
+dotenvy = "dotenvy"
+egui = "egui"
+flate2 = "flate2"
+futures = "futures"
+itertools = "itertools"
+miette = "miette"
+miri = "miri"
+nextest = "nextest"
+proptest = "proptest"
+rayon = "rayon"
+reqwest = "reqwest"
+rhai = "rhai"
+rustacean = "rustacean"
+rustc = "rustc"
+rustdoc = "rustdoc"
+rustfmt = "rustfmt"
+rustup = "rustup"
+serde = "serde"
+sqlx = "sqlx"
+tauri = "tauri"
+thiserror = "thiserror"
+tokio = "tokio"
+tracing = "tracing"
+wasm = "wasm"
+wgpu = "wgpu"
+winit = "winit"
+
+# 后端、协议与消息中间件
+amqp = "amqp"
+avro = "avro"
+bson = "bson"
+clickhouse = "clickhouse"
+cors = "cors"
+csrf = "csrf"
+grpc = "grpc"
+jwks = "jwks"
+jwt = "jwt"
+kafka = "kafka"
+msgpack = "msgpack"
+nats = "nats"
+ndjson = "ndjson"
+oidc = "oidc"
+otel = "otel"
+protobuf = "protobuf"
+sse = "sse"
+webhook = "webhook"
+websocket = "websocket"
+websockets = "websockets"
+
+# 系统编程、可观测性与基础设施
+ebpf = "ebpf"
+epoll = "epoll"
+grafana = "grafana"
+ioctl = "ioctl"
+jaeger = "jaeger"
+kqueue = "kqueue"
+kubernetes = "kubernetes"
+libc = "libc"
+mmap = "mmap"
+musl = "musl"
+nginx = "nginx"
+postgres = "postgres"
+postgresql = "postgresql"
+prometheus = "prometheus"
+ptrace = "ptrace"
+redis = "redis"
+sqlite = "sqlite"
+xattr = "xattr"
+zstd = "zstd"
+
+
+[type.proto]
+extend-glob = ["*.proto"]
+check-file = false

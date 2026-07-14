@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- macOS 15+ 本地网络权限: 缺少此声明 mDNS 会静默失败(方案风险表关键项) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>deskmate 需要访问本地网络, 以发现同一局域网内的其他设备并传输文件。</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_deskmate._tcp</string>
+    </array>
+</dict>
+</plist>

@@ -1,0 +1,96 @@
+name: CI
+
+# When pushing the main branch
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # 格式化、Clippy 静态检查与文档构建检查
+  # (workspace 含 Tauri 应用: 需要 WebKitGTK 系统依赖与前端 dist 才能通过编译)
+  lint:
+    name: Format & Clippy & Doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      # 产出 dist(tauri::generate_context! 编译期嵌入前端资源), 顺带完成 tsc 类型检查
+      - name: Build frontend
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile && pnpm build
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # 文档护栏只对库 crate 生效(应用壳不承诺文档完备)
+      - name: cargo doc
+        run: cargo doc --no-deps -p deskmate-core
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # 单元测试与集成测试（使用 nextest）
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - name: Build frontend
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile && pnpm build
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: cargo nextest
+        run: cargo nextest run --workspace --no-tests pass
+
+  # 依赖的安全公告与许可证审计
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  # 拼写检查
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # 锁定版本，避免上游 master 变更导致 CI 意外失败（dependabot 会定期升级）
+      - uses: crate-ci/typos@v1.48.0

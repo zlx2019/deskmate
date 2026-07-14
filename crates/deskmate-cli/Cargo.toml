@@ -1,0 +1,20 @@
+[package]
+name = "deskmate-cli"
+description = "deskmate 协议联调与验证工具(先于 UI 在两台机器间调试发现与传输)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+deskmate-core.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

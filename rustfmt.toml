@@ -1,0 +1,29 @@
+# 单行代码最大宽度
+max_width = 100
+# 换行符使用 LF(\n)
+newline_style = "Unix"
+# 字段名相同时简写
+use_field_init_shorthand = true
+# try! > ?
+use_try_shorthand = true
+
+# 缩进是否使用tab
+hard_tabs = false
+# 缩进宽度
+tab_spaces = 4
+# 如果有多个 #[derive] 则合并成一个
+merge_derives = true
+# 删除多余的嵌套括号
+remove_nested_parens = true
+
+# 按 2024 edition 解析代码。cargo fmt 会从 Cargo.toml 读取，
+# 但编辑器（如 rust-analyzer 的 format-on-save）直接调用 rustfmt 时默认按 2015 解析，
+# 显式声明可避免两者行为不一致
+edition = "2024"
+# 锁定格式化规则版本（2024 风格），防止 rustfmt 升级引入新默认风格导致全仓库 diff
+style_edition = "2024"
+
+# use 语句按字母序排序
+reorder_imports = true
+# mod 声明按字母序排序
+reorder_modules = true

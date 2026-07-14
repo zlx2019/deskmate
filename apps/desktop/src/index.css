@@ -1,0 +1,290 @@
+/* deskmate — "面对面" 主题(配色对齐 deskmate_map_ui_redesign_v3 设计稿)
+   蓝紫主色 + 有机岛屿地图 + 点阵底纹, 亮暗双主题
+
+   主题切换机制:
+   Tailwind 4 的 @theme 把变量落在 :root, utility 全部经 var() 取值;
+   给 <html> 加 data-theme="light" 即可整体换肤(下方覆盖块)。
+   偏好由前端存 localStorage("dm-theme"), 顶栏按钮切换。 */
+@import "tailwindcss";
+
+@theme {
+  /* 底色三层: 页面底 / 面板 / 浮层控件 */
+  --color-abyss: #101425;
+  --color-panel: #161b30;
+  --color-panel-2: #1b2138;
+  /* 描线两级(在 panel 底上的等效实色, 避免透明度修饰符二次叠加过淡) */
+  --color-line: #262c45;
+  --color-line-2: #363e63;
+  /* 地图专用: 区域底 / 岛屿两级 / 道路 / 点阵 */
+  --color-map: #141931;
+  --color-isle: #1d2442;
+  --color-isle-2: #242c52;
+  --color-road: rgba(160, 170, 255, 0.14);
+  --color-dots: rgba(150, 160, 255, 0.1);
+  /* 蓝紫主色(涟漪 / 在线 / 主操作)与深主色(本机头像底) */
+  --color-sonar: #8b96ff;
+  --color-sonar-dim: #6b78f5;
+  /* 珊瑚暖色(传输中 / 强调) */
+  --color-ember: #ff8a70;
+  /* 告警红 */
+  --color-alert: #f26057;
+  /* 在线绿 */
+  --color-live: #3ec06d;
+  /* 文字三级: 主 / 次 / 弱 */
+  --color-fog: #eef0fa;
+  --color-mist: #9aa1bd;
+  --color-faint: #666d8c;
+  /* 主色淡底(chip / 图标底) */
+  --color-chip: rgba(139, 150, 255, 0.14);
+
+  /* 等宽仪表字体(数据/标签), 全部走系统字体离线可用 */
+  --font-gauge: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+/* 毛玻璃模式(系统材质应用成功后由前端设 data-vibrancy):
+   底色三层改半透明让 vibrancy/mica 透出; 材质不可用的平台
+   不会带此属性, 保持上方不透明值, 不漏桌面 */
+[data-vibrancy] {
+  --color-abyss: rgb(16 20 37 / 0.66);
+  --color-map: rgb(20 25 49 / 0.55);
+  --color-panel: rgb(22 27 48 / 0.78);
+  --color-panel-2: rgb(27 33 56 / 0.92);
+}
+
+[data-vibrancy][data-theme="light"] {
+  --color-abyss: rgb(238 241 250 / 0.6);
+  --color-map: rgb(230 235 249 / 0.5);
+  --color-panel: rgb(255 255 255 / 0.72);
+  --color-panel-2: rgb(244 246 253 / 0.92);
+}
+
+/* 亮色主题: 设计稿 .light 全套值 */
+[data-theme="light"] {
+  --color-abyss: #eef1fa;
+  --color-panel: #ffffff;
+  --color-panel-2: #f4f6fd;
+  --color-line: #e3e6f2;
+  --color-line-2: #ccd2e8;
+  --color-map: #e6ebf9;
+  --color-isle: #f6f8ff;
+  --color-isle-2: #ffffff;
+  --color-road: rgba(91, 108, 240, 0.18);
+  --color-dots: rgba(91, 108, 240, 0.14);
+  --color-sonar: #5b6cf0;
+  --color-sonar-dim: #4655d8;
+  --color-ember: #f0654c;
+  --color-alert: #e0483d;
+  --color-fog: #232948;
+  --color-mist: #6d7494;
+  --color-faint: #9aa0ba;
+  --color-chip: rgba(91, 108, 240, 0.1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-abyss);
+  color: var(--color-fog);
+  font-family:
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+    system-ui, sans-serif;
+  transition: background 0.3s;
+  /* 桌面应用质感: 默认禁选中, 输入区除外 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ---------- 动画 ---------- */
+
+/* 中心声波: 双圈错峰扩散的搜寻涟漪 */
+@keyframes sonar-wave {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+/* 节点上线: 冒泡弹跳(设计稿 dmpop 曲线) */
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 节点下线: 收缩消散 */
+@keyframes pop-out {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.1);
+  }
+}
+
+/* 上线光环: 落点处一圈爆开(设计稿 dmrip) */
+@keyframes ring-burst {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* 设备气泡待机浮动(设计稿 dmbob) */
+@keyframes bob {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+/* 扫描胶囊的动态省略号 */
+@keyframes dots {
+  0%,
+  20% {
+    content: "";
+  }
+  40% {
+    content: "·";
+  }
+  60% {
+    content: "··";
+  }
+  80%,
+  100% {
+    content: "···";
+  }
+}
+
+/* 拖拽悬停的目标涟漪 */
+@keyframes ping-ring {
+  0% {
+    transform: scale(0.45);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+/* 弹窗浮入 */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 遮罩淡入 */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 状态点呼吸 */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.anim-sonar-wave {
+  animation: sonar-wave 2.4s ease-out infinite;
+}
+.anim-pop-in {
+  animation: pop-in 0.55s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+.anim-pop-out {
+  animation: pop-out 0.38s cubic-bezier(0.5, 0, 0.7, 0.3) both;
+}
+.anim-ring-burst {
+  animation: ring-burst 1s ease-out both;
+}
+.anim-bob {
+  animation: bob 3.4s ease-in-out infinite;
+}
+.anim-ping-ring {
+  animation: ping-ring 1.6s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+.anim-fade-up {
+  animation: fade-up 0.22s ease-out both;
+}
+.anim-fade-in {
+  animation: fade-in 0.18s ease-out both;
+}
+.anim-breathe {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+/* 扫描胶囊尾部的跳动省略号 */
+.scan-dots::after {
+  content: "···";
+  animation: dots 1.6s steps(1) infinite;
+}
+
+/* 仪表标签: 大写 + 宽字距 */
+.gauge-label {
+  font-family: var(--font-gauge);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-mist);
+}
+
+/* 面板滚动条(WebView 内统一) */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line-2);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

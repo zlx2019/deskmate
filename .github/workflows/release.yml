@@ -1,0 +1,135 @@
+name: Release
+
+# 推送 v* 标签时：
+#   1. 校验 tag 与应用版本一致 → 生成 Changelog 并创建 GitHub Release
+#   2. tauri-action 构建三平台安装包并附加到 Release：
+#
+# macOS 签名与公证（可选）：在仓库 Secrets 配置 APPLE_CERTIFICATE /
+# APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY / APPLE_ID /
+# APPLE_PASSWORD / APPLE_TEAM_ID 后自动启用；未配置则产出未签名包
+# （用户首次打开需右键 → 打开绕过 Gatekeeper）。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # 生成 Changelog 并创建 GitHub Release
+  changelog:
+    name: Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # tag 与应用版本（apps/desktop/package.json，Tauri 打包版本之源）不一致时中止
+      - name: Verify tag matches app version
+        run: |
+          ver=$(jq -r '.version' apps/desktop/package.json)
+          tag="${{ github.ref_name }}"
+          if [ "v$ver" != "${tag%%-*}" ] && [ "v$ver" != "$tag" ]; then
+            echo "::error::tag $tag 与应用版本 $ver 不一致"
+            exit 1
+          fi
+
+      # 依据 cliff.toml 生成本次发布的 Changelog
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: ${{ contains(github.ref_name, '-') && format('--unreleased --tag {0}', github.ref_name) || '--latest' }} --strip header
+        env:
+          OUTPUT: CHANGES.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          body_path: CHANGES.md
+          token: ${{ secrets.GITHUB_TOKEN }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # 构建三平台安装包并附加到上面创建的 Release
+  bundle:
+    name: Bundle ${{ matrix.name }}
+    needs: changelog
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon)
+            os: macos-latest
+            args: --target aarch64-apple-darwin
+            rust-target: aarch64-apple-darwin
+          - name: macOS (Intel)
+            os: macos-latest
+            args: --target x86_64-apple-darwin
+            rust-target: x86_64-apple-darwin
+          - name: Linux
+            os: ubuntu-22.04
+            args: ""
+            rust-target: ""
+          - name: Windows
+            os: windows-latest
+            args: ""
+            rust-target: ""
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.rust-target }}
+      - name: Enable Apple code signing (optional)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE Not configured, skip signing, produce unsigned package"
+            exit 0
+          fi
+          for var in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            {
+              echo "${var}<<__APPLE_EOF__"
+              printenv "$var"
+              echo "__APPLE_EOF__"
+            } >> "$GITHUB_ENV"
+          done
+      # 构建并把安装包上传到 tag 对应的 Release（beforeBuildCommand 由 Tauri.toml 提供）
+      - name: Build and upload bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          args: ${{ matrix.args }}

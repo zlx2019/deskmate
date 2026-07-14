@@ -1,0 +1,74 @@
+# deskmate 桌面端 Tauri 应用配置
+#
+# 键名统一 camelCase(Tauri 配置的规范主名, kebab-case 只是别名):
+# tauri-action 等外围工具只认 camelCase, 用 kebab-case 会导致
+# productName 读取失败、产物名回退成 crate 名而使 Release 上传找不到文件。
+
+# 产品名: 窗口标题栏、安装包与可执行文件名
+productName = "deskmate"
+# 应用版本
+version = "../package.json"
+# 应用唯一标识
+identifier = "io.github.zlx2019.deskmate"
+
+[build]
+beforeDevCommand = "pnpm dev"
+devUrl = "http://localhost:1420"
+beforeBuildCommand = "pnpm build"
+frontendDist = "../dist"
+
+[app]
+# 透明窗口(毛玻璃底材质)在 macOS 依赖私有 API; 仅站外分发, 无 App Store 顾虑
+macOSPrivateApi = true
+
+# 内容安全策略(打包版生效, dev 下 Tauri 自动放宽):
+# 默认仅允许自身资源; 图片额外放行 blob:(头像 Blob URL)与 data:;
+# style 需 unsafe-inline(React 行内样式 + Tailwind 注入); Tauri 会自动追加 IPC 所需项
+[app.security]
+csp = "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'"
+
+[[app.windows]]
+# 窗口标题
+title = "Deskmate"
+# 窗口默认宽高 & 最小宽高
+width = 980
+height = 700
+minWidth = 760
+minHeight = 560
+# 接收系统文件拖拽 —— "拖文件到设备头像发送"依赖此项
+dragDropEnabled = true
+# 透明窗口: 让系统材质(vibrancy/mica)透出; CSS 默认画满不透明背景,
+# 仅材质应用成功后前端才切半透明变量, 不支持的平台不会漏出桌面
+transparent = true
+
+[bundle]
+active = true
+# 按平台明确产物: macOS app+dmg / Windows nsis(msi 不支持防火墙钩子, 不产出)/
+# Linux appimage+deb
+targets = ["app", "dmg", "nsis", "appimage", "deb"]
+publisher = "zlx2019"
+copyright = "Copyright © 2026 zlx2019"
+category = "Utility"
+shortDescription = "局域网文件与文本互传"
+longDescription = "deskmate 是一个局域网内文件/文本互传的桌面应用: 无中心服务端, 自动发现同网段设备, 拖拽到设备头像即可发送, 全程 TLS 加密。"
+# 应用图标(icons/app-icon.png 为 1024 源图, 经 `pnpm tauri icon` 生成全套)
+icon = [
+  "icons/32x32.png",
+  "icons/128x128.png",
+  "icons/128x128@2x.png",
+  "icons/icon.icns",
+  "icons/icon.ico",
+]
+
+[bundle.macos]
+# WKWebView 与本地网络权限行为以 Catalina 为基线
+minimumSystemVersion = "10.15"
+
+[bundle.windows.nsis]
+# 装机级安装(防火墙规则注册需要管理员权限)
+installMode = "perMachine"
+# 安装/卸载钩子: 自动注册与清理防火墙入站规则(方案风险表项)
+installerHooks = "windows/hooks.nsh"
+
+[bundle.linux.deb]
+# mDNS 发现与托盘在 GNOME 下的常见运行时依赖由 Tauri 自动推导, 此处无需额外声明
