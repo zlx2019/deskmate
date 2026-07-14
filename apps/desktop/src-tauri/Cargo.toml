@@ -39,7 +39,7 @@ tauri = { version = "2", features = [
   "macos-private-api",
 ] }
 # 系统窗口材质: macOS vibrancy / Windows mica(失败静默回退纯色)
-window-vibrancy = "0.6"
+window-vibrancy = "0.7"
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 # 系统通知(收到请求 / 传输完成等, Rust 侧直发)
