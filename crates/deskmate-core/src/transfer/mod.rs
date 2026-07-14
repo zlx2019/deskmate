@@ -277,8 +277,8 @@ fn sanitize_component(name: &str, windows_rules: bool) -> String {
 /// 清洗对端提供的相对路径, 防路径穿越与非法落盘名
 ///
 /// 规则: 统一把 `\` 视作分隔符; 仅保留普通分量, 出现盘符/根目录/`..`
-/// 即拒绝; 空路径拒绝。逐段再按**本机平台**做落盘净化(见
-/// [`sanitize_component`]): 净化是确定性的, 断点续传的 `.part` 路径
+/// 即拒绝; 空路径拒绝。逐段再按**本机平台**做落盘净化(见内部函数
+/// `sanitize_component`): 净化是确定性的, 断点续传的 `.part` 路径
 /// 与协商用的原始 rel_path 天然对齐。
 pub fn sanitize_rel_path(rel: &str) -> Result<PathBuf, TransferError> {
     sanitize_rel_path_for(rel, cfg!(target_os = "windows"))
