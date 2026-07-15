@@ -4,7 +4,7 @@ import { memo, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { humanBytes, type PeerDto, type TextMsg, type TransferItem } from "../types";
-import { ClearButton } from "./ClearButton";
+import { CardClose, ClearButton } from "./ClearButton";
 import { HistoryList } from "./HistoryList";
 import { MessageComposer } from "./MessageComposer";
 
@@ -136,7 +136,7 @@ function PanelButton({
   return (
     <button
       onClick={onClick}
-      className={`cursor-pointer rounded border px-2 py-0.5 text-[11px] transition-colors ${
+      className={`shrink-0 cursor-pointer rounded border px-2 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
         danger
           ? "border-alert/40 text-alert/90 hover:bg-alert/10"
           : "border-line-2 text-fog/80 hover:border-sonar/50 hover:text-sonar"
@@ -147,11 +147,12 @@ function PanelButton({
   );
 }
 
-/** 文本消息卡片(按方向区分"来自/发往", 可单条删除) */
+/** 文本消息卡片(按方向区分"来自/发往", 右上角悬浮删除) */
 function TextCard({ msg, onRemove }: { msg: TextMsg; onRemove: (id: string) => void }) {
   const out = msg.direction === "out";
   return (
-    <div className="rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition-colors duration-300">
+    <div className="group relative rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition-colors duration-300">
+      <CardClose onClick={() => onRemove(msg.id)} />
       <div className="flex items-center gap-2">
         <span className={`font-gauge text-xs ${out ? "text-ember" : "text-sonar"}`}>✉</span>
         <span className="min-w-0 flex-1 truncate text-sm">
@@ -159,9 +160,6 @@ function TextCard({ msg, onRemove }: { msg: TextMsg; onRemove: (id: string) => v
           <span className="text-fog">{msg.peerName}</span>
         </span>
         <PanelButton onClick={() => navigator.clipboard.writeText(msg.text)}>复制</PanelButton>
-        <PanelButton danger onClick={() => onRemove(msg.id)}>
-          删除
-        </PanelButton>
       </div>
       {/* 逐字节原样展示: pre-wrap 保留空白与换行 */}
       <div className="mt-1.5 max-h-28 select-text overflow-auto whitespace-pre-wrap break-all rounded border border-line/60 bg-abyss/60 px-2.5 py-1.5 font-gauge text-xs text-fog/90">

@@ -1,7 +1,22 @@
-// 二段确认的清空按钮: 首次点击进入待确认态(3s 内再点执行, 超时恢复)
-// 供互传记录与文字消息的"清空全部"共用, 避免破坏性操作误触
+// 清理操作小件: 二段确认的清空按钮 + 卡片右上角删除角标
+// 供互传记录与文字消息共用
 
 import { useEffect, useState } from "react";
+
+/** 卡片右上角的悬浮删除角标(hover 卡片时显示; 卡片容器需 relative group) */
+export function CardClose({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="删除"
+      className="absolute -top-1.5 -right-1.5 hidden size-[18px] cursor-pointer items-center justify-center rounded-full border border-line-2 bg-panel-2 text-mist transition-colors group-hover:flex hover:border-alert/60 hover:text-alert"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+        <path d="M18 6 6 18M6 6l12 12" />
+      </svg>
+    </button>
+  );
+}
 
 /** 清空按钮(垃圾桶图标 → 点击变"确认清空"红字) */
 export function ClearButton({ title, onConfirm }: { title: string; onConfirm: () => void }) {

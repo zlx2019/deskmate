@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { humanBytes, type HistoryEntry } from "../types";
-import { ClearButton } from "./ClearButton";
+import { CardClose, ClearButton } from "./ClearButton";
 
 /** 状态文案与颜色(与传输卡片的语义一致) */
 const STATUS_META: Record<HistoryEntry["status"], { label: string; color: string }> = {
@@ -58,8 +58,9 @@ export function HistoryList() {
       {entries.map((e) => (
         <div
           key={`${e.transferId}-${e.at}`}
-          className="rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition-colors duration-300"
+          className="group relative rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition-colors duration-300"
         >
+          <CardClose onClick={() => removeOne(e.transferId)} />
           <div className="flex items-center gap-2">
             <span
               className={`font-gauge text-xs ${e.direction === "send" ? "text-ember" : "text-sonar"}`}
@@ -82,17 +83,11 @@ export function HistoryList() {
             {e.lastPath && (
               <button
                 onClick={() => revealItemInDir(e.lastPath ?? "")}
-                className="cursor-pointer rounded border border-line-2 px-2 py-0.5 text-[11px] text-fog/80 transition-colors hover:border-sonar/50 hover:text-sonar"
+                className="shrink-0 cursor-pointer rounded border border-line-2 px-2 py-0.5 text-[11px] whitespace-nowrap text-fog/80 transition-colors hover:border-sonar/50 hover:text-sonar"
               >
                 显示
               </button>
             )}
-            <button
-              onClick={() => removeOne(e.transferId)}
-              className="cursor-pointer rounded border border-alert/40 px-2 py-0.5 text-[11px] text-alert/90 transition-colors hover:bg-alert/10"
-            >
-              删除
-            </button>
           </div>
         </div>
       ))}
