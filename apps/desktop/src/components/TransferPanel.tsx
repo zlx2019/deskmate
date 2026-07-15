@@ -1,9 +1,11 @@
-// 右侧面板: 传输任务列表 + 收到的文本消息
+// 右侧面板: "传输任务 / 互传记录" tab + 文字消息流 + 聊天输入行
 
-import { memo } from "react";
+import { memo, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
-import { humanBytes, type TextMsg, type TransferItem } from "../types";
+import { humanBytes, type PeerDto, type TextMsg, type TransferItem } from "../types";
+import { HistoryList } from "./HistoryList";
+import { MessageComposer } from "./MessageComposer";
 
 /** 状态视觉映射 */
 const STATUS_META: Record<
@@ -144,14 +146,16 @@ function PanelButton({
   );
 }
 
-/** 文本消息卡片 */
+/** 文本消息卡片(按方向区分"来自/发往") */
 function TextCard({ msg }: { msg: TextMsg }) {
+  const out = msg.direction === "out";
   return (
     <div className="rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition-colors duration-300">
       <div className="flex items-center gap-2">
-        <span className="font-gauge text-xs text-sonar">✉</span>
+        <span className={`font-gauge text-xs ${out ? "text-ember" : "text-sonar"}`}>✉</span>
         <span className="min-w-0 flex-1 truncate text-sm">
-          来自 <span className="text-fog">{msg.fromName}</span>
+          {out ? "发往 " : "来自 "}
+          <span className="text-fog">{msg.peerName}</span>
         </span>
         <PanelButton onClick={() => navigator.clipboard.writeText(msg.text)}>复制</PanelButton>
       </div>
@@ -163,39 +167,69 @@ function TextCard({ msg }: { msg: TextMsg }) {
   );
 }
 
-/** 右侧栏(memo: 节点上下线等无关更新时 props 未变即跳过) */
+/** 顶部 tab 按钮(选中态带下划线) */
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative flex cursor-pointer items-center gap-2 px-3 py-2.5 text-xs font-medium tracking-[0.14em] transition-colors ${
+        active ? "text-fog" : "text-mist hover:text-fog/80"
+      }`}
+    >
+      {children}
+      {active && <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-sonar" />}
+    </button>
+  );
+}
+
+/** 右侧栏(memo: 节点高频进度更新之外的 props 变化频率低, 未变即跳过) */
 export const TransferPanel = memo(function TransferPanel({
   transfers,
   texts,
-  onShowHistory,
+  peers,
+  getPin,
+  onPinLearned,
+  onTextSent,
   onPinRetry,
 }: {
   transfers: TransferItem[];
   texts: TextMsg[];
-  onShowHistory: () => void;
+  /** 在线节点(聊天输入行的目标候选) */
+  peers: PeerDto[];
+  getPin: (fingerprint: string) => string | undefined;
+  onPinLearned: (fingerprint: string, pin: string) => void;
+  /** 文本发送成功(记入消息流) */
+  onTextSent: (peerName: string, text: string) => void;
   onPinRetry: (item: TransferItem) => void;
 }) {
+  // 上半区分页: 传输任务 / 互传记录(切回记录页时重新拉取)
+  const [tab, setTab] = useState<"tasks" | "history">("tasks");
   const ordered = [...transfers].sort((a, b) => b.startedAt - a.startedAt);
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
-        <span className="text-xs font-medium tracking-[0.14em] text-mist">传输任务</span>
-        <span className="rounded-full bg-chip px-2 py-px text-[11px] font-medium text-sonar">
-          {ordered.length}
-        </span>
-        <button
-          onClick={onShowHistory}
-          title="传输历史"
-          className="ml-auto cursor-pointer text-mist transition-colors hover:text-sonar"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 7v5l3 3" />
-          </svg>
-        </button>
+      <div className="flex items-center border-b border-line px-2">
+        <TabButton active={tab === "tasks"} onClick={() => setTab("tasks")}>
+          传输任务
+          <span className="rounded-full bg-chip px-2 py-px text-[11px] font-medium text-sonar">
+            {ordered.length}
+          </span>
+        </TabButton>
+        <TabButton active={tab === "history"} onClick={() => setTab("history")}>
+          互传记录
+        </TabButton>
       </div>
       <div className="flex min-h-0 flex-[3] flex-col gap-2.5 overflow-y-auto px-3 py-3">
-        {ordered.length === 0 ? (
+        {tab === "history" ? (
+          <HistoryList />
+        ) : ordered.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs text-mist/70">
             拖拽文件到地图上的设备即可发送
           </div>
@@ -218,6 +252,12 @@ export const TransferPanel = memo(function TransferPanel({
           texts.map((m) => <TextCard key={m.id} msg={m} />)
         )}
       </div>
+      <MessageComposer
+        peers={peers}
+        getPin={getPin}
+        onPinLearned={onPinLearned}
+        onSent={onTextSent}
+      />
     </div>
   );
 });

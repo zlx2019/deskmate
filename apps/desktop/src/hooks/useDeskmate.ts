@@ -1,6 +1,6 @@
 // deskmate 前端状态核心: 订阅引擎事件, 聚合节点/传输/文本/请求状态
 
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { EVENTS } from "../events";
@@ -159,12 +159,12 @@ export function useDeskmate() {
   // 对端 PIN 会话缓存(fingerprint → pin), 发送时自动附带, 不持久化
   const pinCache = useRef(new Map<string, string>());
 
-  /** 取会话缓存的对端 PIN */
-  const getPin = (fingerprint: string) => pinCache.current.get(fingerprint);
+  /** 取会话缓存的对端 PIN(useCallback 保引用稳定, 供 memo 子组件使用) */
+  const getPin = useCallback((fingerprint: string) => pinCache.current.get(fingerprint), []);
   /** 记住验证通过的对端 PIN(本次运行内有效) */
-  const rememberPin = (fingerprint: string, pin: string) => {
+  const rememberPin = useCallback((fingerprint: string, pin: string) => {
     pinCache.current.set(fingerprint, pin);
-  };
+  }, []);
 
   /** 按哈希加载头像字节转 Blob URL; self 为 true 时读本机自定义头像文件 */
   const loadAvatar = (hash: string | null, isSelf = false) => {
@@ -241,7 +241,8 @@ export function useDeskmate() {
             [
               {
                 id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                fromName: ev.fromName,
+                direction: "in" as const,
+                peerName: ev.fromName,
                 text: ev.text,
                 at: Date.now(),
               },
@@ -330,6 +331,22 @@ export function useDeskmate() {
     }
   };
 
+  /** 记录一条发出的文本进消息流(聊天输入框发送成功后调用) */
+  const addSentText = useCallback((peerName: string, text: string) => {
+    setTexts((prev) =>
+      [
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          direction: "out" as const,
+          peerName,
+          text,
+          at: Date.now(),
+        },
+        ...prev,
+      ].slice(0, 50),
+    );
+  }, []);
+
   /** 重新拉取本机信息(设置保存后昵称/头像即时刷新, 含新头像 Blob 加载) */
   const refreshSelf = () => {
     api
@@ -352,6 +369,7 @@ export function useDeskmate() {
     respondOffer,
     getPin,
     rememberPin,
+    addSentText,
     refreshSelf,
     dispatch,
   };

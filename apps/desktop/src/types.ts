@@ -144,10 +144,13 @@ export interface HistoryEntry {
   lastPath: string | null;
 }
 
-/** 收到的文本消息 */
+/** 文字消息(收到的与发出的都进同一消息流) */
 export interface TextMsg {
   id: string;
-  fromName: string;
+  /** 方向: in=收到, out=发出 */
+  direction: "in" | "out";
+  /** 对端设备名(in 为来源, out 为目标) */
+  peerName: string;
   text: string;
   at: number;
 }
