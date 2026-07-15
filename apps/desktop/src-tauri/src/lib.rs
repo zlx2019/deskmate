@@ -40,6 +40,14 @@ pub fn run() {
             app.manage(state);
             setup_tray(app.handle())?;
             apply_window_effects(app.handle());
+            // Ctrl-C / SIGTERM 转优雅退出(dev 模式与命令行终止的常见路径):
+            // 信号的默认行为是直接终止进程, RunEvent::Exit 不会触发,
+            // goodbye 与 mDNS 注销都发不出去, 对端要等 TTL 过期才感知下线
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                wait_for_termination().await;
+                handle.exit(0);
+            });
             // 开机自启拉起的实例不亮窗口, 常驻托盘等待收发
             if std::env::args().any(|a| a == "--hidden")
                 && let Some(window) = app.get_webview_window("main")
@@ -96,6 +104,30 @@ pub fn run() {
             _ => {}
         }
     });
+}
+
+/// 等待进程终止信号: Ctrl-C(SIGINT); unix 下另含 SIGTERM(kill 默认信号)
+async fn wait_for_termination() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        // SIGTERM 监听注册失败(极罕见)时退化为只等 Ctrl-C
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 /// 系统窗口材质是否已生效(前端据此切换半透明背景变量)
