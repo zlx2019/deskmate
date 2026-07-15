@@ -46,7 +46,10 @@ pub struct ReceiverOptions {
     pub pin: Option<String>,
 }
 
-use crate::config::{PIN_MAX_FAILURES, PIN_WINDOW};
+use crate::config::{
+    HANDSHAKE_TIMEOUT, MAX_CONCURRENT_CONNECTIONS, PENDING_SWEEP_INTERVAL, PENDING_TTL,
+    PIN_MAX_FAILURES, PIN_TRACK_CAP, PIN_WINDOW,
+};
 
 /// 断点元数据: 任务被接受即落盘, 完成/取消即删除, 意外断连时留存
 ///
@@ -116,6 +119,10 @@ struct PendingTransfer {
     conflict: ConflictPolicy,
     /// 控制状态源(Pause/Resume/Cancel 写入, 数据会话订阅)
     control: watch::Sender<ControlState>,
+    /// 已有数据会话占用(同一任务拒绝并发数据连接, 防 .part 互写)
+    active: bool,
+    /// 登记时刻(始终未开数据连接的条目按 TTL 清扫, 防泄漏)
+    registered_at: Instant,
 }
 
 /// 进行中任务表: 控制会话写入, 数据会话消费
@@ -136,14 +143,19 @@ struct ReceiverCtx {
     resume_dir: PathBuf,
     /// 配对 PIN(None 不启用, 运行时可改)
     pin: Arc<RwLock<Option<String>>>,
-    /// PIN 失败限速状态: (窗口起点, 窗口内失败次数)
-    pin_failures: Mutex<(Instant, u32)>,
+    /// PIN 失败限速状态: 来源指纹 → (窗口起点, 窗口内失败次数)
+    ///
+    /// 按来源分别计数 —— 全局单计数会让任一乱试的设备锁死全网配对。
+    pin_failures: Mutex<HashMap<String, (Instant, u32)>>,
     /// 传输请求上抛通道
     offers: mpsc::Sender<TransferOffer>,
     /// 事件流
     sink: EventSink,
     /// 进行中任务表
     pending: PendingMap,
+    /// 落盘定名互斥: dedup 的存在性探测与 rename 之间不允许并发插入,
+    /// 否则两个同名文件会 dedup 出同一路径互相覆盖(rename 本身很快, 串行无碍)
+    finalize_lock: tokio::sync::Mutex<()>,
 }
 
 /// 接收服务句柄: 查询监听地址、控制进行中的传输
@@ -248,11 +260,13 @@ pub fn spawn_receiver(
         avatar: Arc::clone(&avatar),
         resume_dir: options.resume_dir,
         pin: Arc::clone(&pin),
-        pin_failures: Mutex::new((Instant::now(), 0)),
+        pin_failures: Mutex::new(HashMap::new()),
         offers,
         sink: EventSink::new(events),
         pending: Arc::clone(&pending),
+        finalize_lock: tokio::sync::Mutex::new(()),
     });
+    spawn_pending_sweeper(&ctx);
     tokio::spawn(accept_loop(listener, acceptor, ctx));
     Ok(ReceiverHandle {
         local_addr,
@@ -266,9 +280,10 @@ pub fn spawn_receiver(
 
 /// 校验来访请求的 PIN; 未启用 PIN 一律放行
 ///
-/// 暴力破解限速: 60s 窗口内累计 5 次失败后, 整窗一律拒绝(即便 PIN 正确,
-/// 防在线试探); 校验成功重置窗口。
-fn pin_ok(ctx: &ReceiverCtx, provided: Option<&str>) -> bool {
+/// 暴力破解限速按来源(`peer_fp`, 即 TLS 证书指纹)分别计数: 单一来源
+/// 60s 窗口内累计 5 次失败后, 该来源整窗一律拒绝(即便 PIN 正确, 防在线
+/// 试探), 其他设备不受影响; 校验成功清除该来源的计数。
+fn pin_ok(ctx: &ReceiverCtx, peer_fp: &str, provided: Option<&str>) -> bool {
     let expected = ctx
         .pin
         .read()
@@ -277,32 +292,77 @@ fn pin_ok(ctx: &ReceiverCtx, provided: Option<&str>) -> bool {
     let Some(expected) = expected else {
         return true;
     };
-    let mut guard = ctx
+    let mut failures = ctx
         .pin_failures
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     let now = Instant::now();
-    if now.duration_since(guard.0) > PIN_WINDOW {
-        *guard = (now, 0);
-    }
-    if guard.1 >= PIN_MAX_FAILURES {
-        tracing::warn!("PIN 尝试过于频繁, 窗口内一律拒绝");
+    // 窗口已过的条目顺手回收, 表大小由此有界(≈窗口内仍在失败的来源数)
+    failures.retain(|_, (start, _)| now.duration_since(*start) <= PIN_WINDOW);
+    if failures
+        .get(peer_fp)
+        .is_some_and(|(_, fails)| *fails >= PIN_MAX_FAILURES)
+    {
+        tracing::warn!("PIN 尝试过于频繁, 该来源整窗一律拒绝");
         return false;
     }
     if provided == Some(expected.as_str()) {
-        *guard = (now, 0);
+        failures.remove(peer_fp);
         return true;
     }
-    if guard.1 == 0 {
-        guard.0 = now;
+    // 表满则不再追踪新来源, 保守拒绝(窗口内上千个不同指纹本身就是攻击信号)
+    if failures.len() >= PIN_TRACK_CAP && !failures.contains_key(peer_fp) {
+        tracing::warn!("PIN 失败来源过多, 保守拒绝新来源");
+        return false;
     }
-    guard.1 += 1;
-    tracing::warn!("PIN 校验失败({}/{PIN_MAX_FAILURES})", guard.1);
+    let entry = failures.entry(peer_fp.to_string()).or_insert((now, 0));
+    entry.1 += 1;
+    tracing::warn!("PIN 校验失败({}/{PIN_MAX_FAILURES})", entry.1);
     false
+}
+
+/// 启动过期任务清扫: 已接受但发送方一直未开数据连接的表项按 TTL 回收
+///
+/// 弱引用持有上下文: 服务的全部强引用(accept 循环与连接任务)退出后,
+/// 清扫任务随之自行结束(测试等场景会反复建/销服务, 不能钉住资源)。
+fn spawn_pending_sweeper(ctx: &Arc<ReceiverCtx>) {
+    let weak = Arc::downgrade(ctx);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(PENDING_SWEEP_INTERVAL);
+        tick.tick().await; // interval 首跳立即完成, 跳过
+        loop {
+            tick.tick().await;
+            let Some(ctx) = weak.upgrade() else { return };
+            sweep_pending(&ctx);
+        }
+    });
+}
+
+/// 清理超时未开始的任务: 表项移除 + 断点元数据删除(防两者无界累积)
+///
+/// 只清"未被数据会话占用(!active)且登记已超 TTL"的条目 —— 进行中的
+/// 会话不受影响; 意外断连留下的断点(表项已随会话移除, 仅剩 resume
+/// 文件与 .part)也不在清理范围, 续传语义不变。
+fn sweep_pending(ctx: &ReceiverCtx) {
+    let mut expired = Vec::new();
+    lock_pending(&ctx.pending).retain(|id, task| {
+        let dead = !task.active && task.registered_at.elapsed() > PENDING_TTL;
+        if dead {
+            expired.push(id.clone());
+        }
+        !dead
+    });
+    // 元数据删除放锁外(单个 unlink 极快, 异步任务里直接调用可容忍)
+    for id in &expired {
+        remove_resume_meta(&ctx.resume_dir, id);
+        tracing::info!(transfer_id = %id, "清理超时未开始的接收任务");
+    }
 }
 
 /// 受理循环: 每个连接独立任务处理, 单连接故障不影响服务
 async fn accept_loop(listener: TcpListener, acceptor: TlsAcceptor, ctx: Arc<ReceiverCtx>) {
+    // 并发连接上限: 满载时直接拒绝新连接, 防恶意半开连接无界累积耗尽 fd
+    let conn_permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
     loop {
         let (tcp, remote) = match listener.accept().await {
             Ok(pair) => pair,
@@ -311,9 +371,14 @@ async fn accept_loop(listener: TcpListener, acceptor: TlsAcceptor, ctx: Arc<Rece
                 return;
             }
         };
+        let Ok(permit) = Arc::clone(&conn_permits).try_acquire_owned() else {
+            tracing::warn!(%remote, "并发连接已达上限, 拒绝新连接");
+            continue;
+        };
         let acceptor = acceptor.clone();
         let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
+            let _permit = permit; // 连接任务全程占一个名额
             if let Err(e) = handle_connection(tcp, acceptor, ctx).await {
                 tracing::debug!(%remote, "连接会话结束: {e}");
             }
@@ -328,12 +393,18 @@ async fn handle_connection(
     ctx: Arc<ReceiverCtx>,
 ) -> Result<(), TransferError> {
     tcp.set_nodelay(true)?;
-    let mut tls = acceptor.accept(tcp).await?;
+    // 未认证阶段限时: 握手与首帧必须尽快完成, 挡住"连上后不说话"的占坑连接
+    let mut tls = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(tcp))
+        .await
+        .map_err(|_| TransferError::Timeout("TLS 握手"))??;
     // 双向认证: 客户端证书指纹即其身份
     let conn_fp =
         peer_fingerprint(tls.get_ref().1.peer_certificates()).ok_or(TransferError::PeerMismatch)?;
 
-    match read_frame(&mut tls).await? {
+    let first = tokio::time::timeout(HANDSHAKE_TIMEOUT, read_frame(&mut tls))
+        .await
+        .map_err(|_| TransferError::Timeout("首帧"))?;
+    match first? {
         ControlMessage::Hello { version, info } => {
             check_version(&version)?;
             // 声明身份必须与 TLS 证书一致, 防冒充
@@ -382,7 +453,7 @@ async fn control_session(
                 pin,
             }) => {
                 // PIN 是第一道门: 不过门连确认弹窗都不弹
-                let resp = if pin_ok(ctx, pin.as_deref()) {
+                let resp = if pin_ok(ctx, &peer.fingerprint, pin.as_deref()) {
                     handle_request(&peer, transfer_id, files, total_size, ctx).await
                 } else {
                     ControlMessage::TransferResponse {
@@ -430,7 +501,7 @@ async fn handle_text(
     pin: Option<&str>,
     ctx: &Arc<ReceiverCtx>,
 ) -> Result<(), TransferError> {
-    if pin_ok(ctx, pin) {
+    if pin_ok(ctx, &peer.fingerprint, pin) {
         ctx.sink
             .notify(TransferEvent::TextReceived {
                 from: peer.clone(),
@@ -542,6 +613,15 @@ fn register_pending(
     conflict: ConflictPolicy,
     ctx: &Arc<ReceiverCtx>,
 ) -> ControlMessage {
+    // 同 ID 任务已在表中(在传或待传)时拒绝重复登记, 防止覆盖其控制通道
+    if lock_pending(&ctx.pending).contains_key(&transfer_id) {
+        return ControlMessage::TransferResponse {
+            transfer_id,
+            accepted_files: Vec::new(),
+            reason: Some("同 ID 任务已在进行".to_string()),
+            pin_required: false,
+        };
+    }
     save_resume_meta(
         &ctx.resume_dir,
         &transfer_id,
@@ -564,6 +644,8 @@ fn register_pending(
             save_dir,
             conflict,
             control,
+            active: false,
+            registered_at: Instant::now(),
         },
     );
     ControlMessage::TransferResponse {
@@ -586,6 +668,11 @@ fn resume_states(
     if !is_safe_transfer_id(transfer_id) {
         return Vec::new();
     }
+    // 任务仍在表中(在传或待传)时拒绝续传协商: 覆盖表项会顶掉原会话的控制通道
+    if lock_pending(&ctx.pending).contains_key(transfer_id) {
+        tracing::warn!(transfer_id, "任务尚在进行, 拒绝续传协商");
+        return Vec::new();
+    }
     let Some(meta) = load_resume_meta(&ctx.resume_dir, transfer_id) else {
         return Vec::new();
     };
@@ -604,9 +691,7 @@ fn resume_states(
         let Ok(rel) = sanitize_rel_path(&file.rel_path) else {
             continue;
         };
-        let mut part_os = meta.save_dir.join(&rel).into_os_string();
-        part_os.push(PART_SUFFIX);
-        let received = std::fs::metadata(PathBuf::from(part_os))
+        let received = std::fs::metadata(part_path_of(&meta.save_dir.join(&rel), transfer_id))
             .map(|m| m.len())
             .unwrap_or(0);
         states.push(ResumeFileState {
@@ -632,6 +717,8 @@ fn resume_states(
             save_dir: meta.save_dir.clone(),
             conflict: meta.conflict,
             control,
+            active: false,
+            registered_at: Instant::now(),
         },
     );
     states
@@ -646,14 +733,20 @@ async fn data_session(
 ) -> Result<(), TransferError> {
     // 快照任务信息; 表项保留至会话结束, 供控制会话下发指令
     let (files, accepted, save_dir, conflict, control_rx) = {
-        let guard = lock_pending(&ctx.pending);
+        let mut guard = lock_pending(&ctx.pending);
         let task = guard
-            .get(&transfer_id)
+            .get_mut(&transfer_id)
             .ok_or_else(|| TransferError::UnknownTransfer(transfer_id.clone()))?;
         // 数据连接必须来自请求方本人
         if task.peer.fingerprint != conn_fp {
             return Err(TransferError::PeerMismatch);
         }
+        // 独占占用: 同一任务的并发数据连接会写坏同一组 .part
+        // (此处的 return 不会走下方的表项清理, 不影响已占用的会话)
+        if task.active {
+            return Err(TransferError::DuplicateDataSession(transfer_id.clone()));
+        }
+        task.active = true;
         (
             task.files.clone(),
             task.accepted.clone(),
@@ -675,6 +768,7 @@ async fn data_session(
         &save_dir,
         conflict,
         &ctx.resume_dir,
+        &ctx.finalize_lock,
         &mut local,
         &mut remote,
         &ctx.sink,
@@ -726,6 +820,7 @@ async fn receive_data_stream(
     save_dir: &Path,
     conflict: ConflictPolicy,
     resume_dir: &Path,
+    finalize_lock: &tokio::sync::Mutex<()>,
     local: &mut watch::Receiver<ControlState>,
     remote: &mut watch::Receiver<ControlState>,
     sink: &EventSink,
@@ -735,7 +830,11 @@ async fn receive_data_stream(
     let tid: Arc<str> = Arc::from(transfer_id);
     let mut resume_meta = load_resume_meta(resume_dir, transfer_id);
     loop {
-        match read_frame(tls).await? {
+        // 帧间隙同样受空闲上限约束(对端本地暂停可长时间停在文件边界, 故用长值)
+        let frame = tokio::time::timeout(crate::config::DATA_IDLE_TIMEOUT, read_frame(tls))
+            .await
+            .map_err(|_| TransferError::Timeout("等待数据帧"))?;
+        match frame? {
             ControlMessage::FileHeader { file_id, offset } => {
                 let meta = files
                     .get(&file_id)
@@ -744,7 +843,17 @@ async fn receive_data_stream(
                     return Err(TransferError::BadFileId(file_id));
                 }
                 receive_one_file(
-                    tls, &tid, meta, offset, save_dir, conflict, &mut buf, local, remote, sink,
+                    tls,
+                    &tid,
+                    meta,
+                    offset,
+                    save_dir,
+                    conflict,
+                    finalize_lock,
+                    &mut buf,
+                    local,
+                    remote,
+                    sink,
                 )
                 .await?;
                 // 断点元数据记为已完成: 之后中断的续传协商会跳过本文件
@@ -772,6 +881,7 @@ async fn receive_one_file(
     offset: u64,
     save_dir: &Path,
     conflict: ConflictPolicy,
+    finalize_lock: &tokio::sync::Mutex<()>,
     buf: &mut [u8],
     local: &mut watch::Receiver<ControlState>,
     remote: &mut watch::Receiver<ControlState>,
@@ -782,10 +892,7 @@ async fn receive_one_file(
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    // 临时文件: <目标名>.deskmate.part
-    let mut part_os = target.clone().into_os_string();
-    part_os.push(PART_SUFFIX);
-    let part_path = PathBuf::from(part_os);
+    let part_path = part_path_of(&target, transfer_id);
 
     // FileFooter 是整文件哈希: 续传(offset > 0)时先重放 .part 既有前段
     let mut hasher = blake3::Hasher::new();
@@ -839,7 +946,27 @@ async fn receive_one_file(
         return Err(e);
     }
 
-    finalize_file(&target, &part_path, conflict, transfer_id, meta, sink).await
+    finalize_file(
+        &target,
+        &part_path,
+        conflict,
+        finalize_lock,
+        transfer_id,
+        meta,
+        sink,
+    )
+    .await
+}
+
+/// `.part` 临时文件路径: 目标名后掺任务 ID 前缀, 不同任务的同名文件互不干扰
+///
+/// 命名必须确定(续传按同一规则重建路径), 故只依赖 target 与 transfer_id;
+/// ID 已过 [`is_safe_transfer_id`](纯 ASCII), 取前 8 位截断安全且足以避撞。
+fn part_path_of(target: &Path, transfer_id: &str) -> PathBuf {
+    let tid = &transfer_id[..transfer_id.len().min(8)];
+    let mut os = target.to_path_buf().into_os_string();
+    os.push(format!(".{tid}{PART_SUFFIX}"));
+    PathBuf::from(os)
 }
 
 /// 打开 .part 临时文件: 首传直接创建; 续传校验断点对齐并重放前段进哈希器
@@ -875,7 +1002,9 @@ async fn expect_footer(
     meta: &FileMeta,
     received_hash: &str,
 ) -> Result<(), TransferError> {
-    let footer = read_frame(tls).await?;
+    let footer = tokio::time::timeout(crate::config::DATA_IDLE_TIMEOUT, read_frame(tls))
+        .await
+        .map_err(|_| TransferError::Timeout("等待文件尾帧"))??;
     let ControlMessage::FileFooter {
         file_id,
         hash: expected,
@@ -895,26 +1024,35 @@ async fn expect_footer(
 }
 
 /// 校验通过后落盘: 按冲突策略定名 → 原子重命名 → 上报事件
+///
+/// 定名与 rename 全程持 finalize 锁: dedup 的存在性探测到 rename 落地
+/// 之间若有并发 finalize 插入, 两个同名文件会拿到同一路径互相覆盖。
 async fn finalize_file(
     target: &Path,
     part_path: &Path,
     conflict: ConflictPolicy,
+    finalize_lock: &tokio::sync::Mutex<()>,
     transfer_id: &str,
     meta: &FileMeta,
     sink: &EventSink,
 ) -> Result<(), TransferError> {
-    // 同名冲突: 按接收方选定的策略落盘(rename 在两平台均为原子覆盖语义)
-    let final_path = match conflict {
-        // 同名探测是逐个 stat 的同步调用, 放阻塞线程池执行
-        ConflictPolicy::Rename => {
-            let t = target.to_path_buf();
-            tokio::task::spawn_blocking(move || dedup_path(&t))
-                .await
-                .map_err(|e| TransferError::Io(std::io::Error::other(e)))?
-        }
-        ConflictPolicy::Overwrite => target.to_path_buf(),
+    let final_path = {
+        let _guard = finalize_lock.lock().await;
+        // 同名冲突: 按接收方选定的策略落盘(rename 在两平台均为原子覆盖语义)
+        let final_path = match conflict {
+            // 同名探测是逐个 stat 的同步调用, 放阻塞线程池执行
+            ConflictPolicy::Rename => {
+                let t = target.to_path_buf();
+                tokio::task::spawn_blocking(move || dedup_path(&t))
+                    .await
+                    .map_err(|e| TransferError::Io(std::io::Error::other(e)))?
+            }
+            ConflictPolicy::Overwrite => target.to_path_buf(),
+        };
+        tokio::fs::rename(part_path, &final_path).await?;
+        final_path
+        // 锁到此为止: 事件通知可能因通道背压等待, 不应拖住其他文件的落盘
     };
-    tokio::fs::rename(part_path, &final_path).await?;
     sink.notify(TransferEvent::FileCompleted {
         transfer_id: transfer_id.to_string(),
         file_id: meta.file_id,

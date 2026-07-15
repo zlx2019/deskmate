@@ -716,6 +716,188 @@ async fn identity_hot_update() {
     assert_eq!(hash, blake3::hash(&img).to_hex().to_string());
 }
 
+/// PIN 锁定按来源隔离: 一台设备乱试锁死自己, 不影响他人正常配对
+#[tokio::test]
+async fn pin_lockout_is_per_peer() {
+    let h = harness_with(true, ConflictPolicy::default(), None, Some("9999".into())).await;
+    let addrs = [h.target.0];
+    let text_as = |id: &Arc<DeviceIdentity>, pin: Option<&str>| {
+        let id = Arc::clone(id);
+        let fp = h.receiver_fp.clone();
+        let pin = pin.map(str::to_string);
+        async move { send_text(&id, &addrs, h.target.1, Some(fp), pin, "hi").await }
+    };
+
+    // 来源 A 连续失败到锁定阈值
+    for _ in 0..crate::config::PIN_MAX_FAILURES {
+        assert!(matches!(
+            text_as(&h.sender_id, Some("0000")).await,
+            Err(TransferError::PinRequired)
+        ));
+    }
+    // A 已锁定: 窗口内即便 PIN 正确也拒(防在线试探)
+    assert!(matches!(
+        text_as(&h.sender_id, Some("9999")).await,
+        Err(TransferError::PinRequired)
+    ));
+
+    // 来源 B(另一身份)不受 A 连累, 正确 PIN 直接通过
+    let d_b = TempDir::new();
+    let sender_b = Arc::new(DeviceIdentity::load_or_create(d_b.path()).unwrap());
+    text_as(&sender_b, Some("9999")).await.unwrap();
+}
+
+/// 两个发送方并发发同名文件: 互不截断, 各自完整落盘(自动重命名)
+#[tokio::test]
+async fn concurrent_same_name_transfers_do_not_clobber() {
+    let mut h = harness(true).await;
+    let d_b = TempDir::new();
+    let sender_b = Arc::new(DeviceIdentity::load_or_create(d_b.path()).unwrap());
+
+    // 同名不同内容(大小也错开, 中断/截断更易暴露)
+    let (src_a, src_b) = (TempDir::new(), TempDir::new());
+    let (fa, fb) = (
+        src_a.path().join("clash.bin"),
+        src_b.path().join("clash.bin"),
+    );
+    let data_a = pattern_data(2 * 1024 * 1024 + 11, 3);
+    let data_b = pattern_data(1024 * 1024 + 77, 5);
+    std::fs::write(&fa, &data_a).unwrap();
+    std::fs::write(&fb, &data_b).unwrap();
+
+    let send_as = |id: Arc<DeviceIdentity>, path: PathBuf| {
+        let fp = h.receiver_fp.clone();
+        let target = h.target;
+        async move {
+            let (_tx, control) = watch::channel(ControlState::Running);
+            let (events_tx, _keep) = mpsc::channel(64);
+            send_files(
+                &id,
+                &[target.0],
+                target.1,
+                Some(fp),
+                None,
+                None,
+                std::slice::from_ref(&path),
+                control,
+                events_tx,
+            )
+            .await
+        }
+    };
+    let (ra, rb) = tokio::join!(
+        send_as(Arc::clone(&h.sender_id), fa),
+        send_as(Arc::clone(&sender_b), fb)
+    );
+    ra.unwrap();
+    rb.unwrap();
+    for _ in 0..2 {
+        wait_event(&mut h.events, |e| {
+            matches!(e, TransferEvent::Completed { .. })
+        })
+        .await;
+    }
+
+    // 两份内容都完整存在(先到者占原名, 后到者重命名, 顺序不定)
+    let got: Vec<Vec<u8>> = ["clash.bin", "clash (1).bin"]
+        .iter()
+        .map(|n| std::fs::read(h.download_dir.join(n)).unwrap())
+        .collect();
+    assert!(got.contains(&data_a), "clash.bin 的 A 内容缺失或损坏");
+    assert!(got.contains(&data_b), "clash.bin 的 B 内容缺失或损坏");
+    let leftover = walkdir_names(&h.download_dir);
+    assert!(
+        !leftover.iter().any(|n| n.ends_with(super::PART_SUFFIX)),
+        "残留临时文件: {leftover:?}"
+    );
+}
+
+/// 取消能打断阻塞中的接收: 对端停发时 read 卡住, 取消不再静默失效
+#[tokio::test]
+async fn cancel_interrupts_stalled_receive() {
+    use rustls_pki_types::ServerName;
+    use tokio::io::AsyncWriteExt;
+    use tokio_rustls::TlsConnector;
+
+    use crate::PROTOCOL_VERSION;
+    use crate::protocol::{ControlMessage, FileMeta, read_frame, write_frame};
+    use crate::tls::client_config;
+
+    let mut h = harness(true).await;
+    let transfer_id = "stall-test-0001".to_string();
+    let size = 4 * 1024 * 1024u64;
+
+    // 手写协议客户端: 声明 4MiB 只发 1KiB, 连接保持不动(模拟停发/恶意占用)
+    let config = Arc::new(client_config(&h.sender_id, Some(h.receiver_fp.clone())).unwrap());
+    let tls_connect = |cfg: Arc<rustls::ClientConfig>| async move {
+        let tcp = tokio::net::TcpStream::connect(h.target).await.unwrap();
+        TlsConnector::from(cfg)
+            .connect(ServerName::try_from("deskmate").unwrap(), tcp)
+            .await
+            .unwrap()
+    };
+
+    let mut ctrl = tls_connect(Arc::clone(&config)).await;
+    write_frame(
+        &mut ctrl,
+        &ControlMessage::Hello {
+            version: PROTOCOL_VERSION.to_string(),
+            info: h.sender_id.peer_info(),
+        },
+    )
+    .await
+    .unwrap();
+    read_frame(&mut ctrl).await.unwrap();
+    write_frame(
+        &mut ctrl,
+        &ControlMessage::TransferRequest {
+            transfer_id: transfer_id.clone(),
+            files: vec![FileMeta {
+                file_id: 0,
+                rel_path: "stall.bin".to_string(),
+                size,
+            }],
+            total_size: size,
+            pin: None,
+        },
+    )
+    .await
+    .unwrap();
+    read_frame(&mut ctrl).await.unwrap();
+
+    let mut data_conn = tls_connect(Arc::clone(&config)).await;
+    write_frame(
+        &mut data_conn,
+        &ControlMessage::DataHello {
+            transfer_id: transfer_id.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    write_frame(
+        &mut data_conn,
+        &ControlMessage::FileHeader {
+            file_id: 0,
+            offset: 0,
+        },
+    )
+    .await
+    .unwrap();
+    data_conn.write_all(&pattern_data(1024, 1)).await.unwrap();
+    data_conn.flush().await.unwrap();
+
+    // 等接收端进入 chunk read 阻塞后取消; 事件须在 wait_event 的 10s 内到达
+    // (改造前 read 不与控制信号竞速, 取消静默失效, 此处会超时失败)
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(h.handle.cancel(&transfer_id));
+    wait_event(&mut h.events, |e| {
+        matches!(e, TransferEvent::Cancelled { .. })
+    })
+    .await;
+    drop(data_conn);
+    drop(ctrl);
+}
+
 /// 冲突重命名: 依次生成 (1)、(2) 后缀, 无扩展名亦可
 #[test]
 fn dedup_path_appends_counter() {

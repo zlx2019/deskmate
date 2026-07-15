@@ -32,9 +32,13 @@ function humanEta(seconds: number): string {
 /** 单个传输条目卡片 */
 function TransferCard({
   item,
+  onPause,
+  onResume,
   onPinRetry,
 }: {
   item: TransferItem;
+  onPause: (transferId: string) => void;
+  onResume: (transferId: string) => void;
   onPinRetry: (item: TransferItem) => void;
 }) {
   const meta = STATUS_META[item.status];
@@ -78,9 +82,9 @@ function TransferCard({
             </span>
             <span className="flex-1" />
             {item.status === "active" ? (
-              <PanelButton onClick={() => api.pause(item.transferId)}>暂停</PanelButton>
+              <PanelButton onClick={() => onPause(item.transferId)}>暂停</PanelButton>
             ) : (
-              <PanelButton onClick={() => api.resume(item.transferId)}>继续</PanelButton>
+              <PanelButton onClick={() => onResume(item.transferId)}>继续</PanelButton>
             )}
             <PanelButton danger onClick={() => api.cancel(item.transferId)}>
               取消
@@ -198,6 +202,8 @@ export const TransferPanel = memo(function TransferPanel({
   texts,
   peers,
   getPin,
+  onPause,
+  onResume,
   onPinLearned,
   onTextSent,
   onSendImage,
@@ -210,6 +216,9 @@ export const TransferPanel = memo(function TransferPanel({
   /** 在线节点(聊天输入行的目标候选) */
   peers: PeerDto[];
   getPin: (fingerprint: string) => string | undefined;
+  /** 暂停/继续传输(命令成功后同步条目状态) */
+  onPause: (transferId: string) => void;
+  onResume: (transferId: string) => void;
   onPinLearned: (fingerprint: string, pin: string) => void;
   /** 文本发送成功(记入消息流) */
   onTextSent: (peerName: string, text: string) => void;
@@ -246,7 +255,13 @@ export const TransferPanel = memo(function TransferPanel({
           </div>
         ) : (
           ordered.map((t) => (
-            <TransferCard key={t.transferId} item={t} onPinRetry={onPinRetry} />
+            <TransferCard
+              key={t.transferId}
+              item={t}
+              onPause={onPause}
+              onResume={onResume}
+              onPinRetry={onPinRetry}
+            />
           ))
         )}
       </div>

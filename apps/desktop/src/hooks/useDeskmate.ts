@@ -26,7 +26,9 @@ type TransferAction =
       peerName: string;
       peerFingerprint: string;
     }
-  | { type: "event"; event: Exclude<TransferEventDto, { kind: "textReceived" }>; at: number };
+  | { type: "event"; event: Exclude<TransferEventDto, { kind: "textReceived" }>; at: number }
+  // 本地发起的暂停/继续(pause/resume 命令成功后置状态; 引擎无 Paused 事件)
+  | { type: "setPaused"; transferId: string; paused: boolean };
 
 /** 构造传输事件聚合 reducer: 把逐文件的引擎事件折叠成面板条目
  *
@@ -53,6 +55,20 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
         filesDone: 0,
         speed: 0,
         startedAt: Date.now(),
+      },
+    };
+  }
+
+  // 本地暂停/继续: 仅对进行中的任务生效, 终态不回退
+  if (action.type === "setPaused") {
+    const item = state[action.transferId];
+    if (!item || (item.status !== "active" && item.status !== "paused")) return state;
+    return {
+      ...state,
+      [action.transferId]: {
+        ...item,
+        status: action.paused ? "paused" : "active",
+        speed: action.paused ? 0 : item.speed,
       },
     };
   }
@@ -337,23 +353,51 @@ export function useDeskmate() {
     [getPin],
   );
 
-  /** 应答接收请求; overwrite 为本次的同名冲突决策 */
+  /** 应答接收请求; overwrite 为本次的同名冲突决策
+   *
+   * 应答失败(引擎侧超时/会话断开)也必须移除弹窗: offer 弹窗没有其他关闭出口,
+   * 留着只会永久挡住本会话后续的所有接收请求。 */
   const respondOffer = useCallback(
     async (offer: OfferDto, accept: boolean, opts?: { saveDir?: string; overwrite?: boolean }) => {
-      await api.respondOffer(offer.offerId, accept, opts?.saveDir, opts?.overwrite ?? false);
-      setOffers((prev) => prev.filter((o) => o.offerId !== offer.offerId));
-      if (accept) {
-        dispatch({
-          type: "begin",
-          transferId: offer.transferId,
-          direction: "recv",
-          peerName: offer.peerName,
-          peerFingerprint: offer.peerFingerprint,
-        });
+      try {
+        await api.respondOffer(offer.offerId, accept, opts?.saveDir, opts?.overwrite ?? false);
+        if (accept) {
+          dispatch({
+            type: "begin",
+            transferId: offer.transferId,
+            direction: "recv",
+            peerName: offer.peerName,
+            peerFingerprint: offer.peerFingerprint,
+          });
+        }
+      } catch (e) {
+        console.error("应答接收请求失败:", e);
+      } finally {
+        setOffers((prev) => prev.filter((o) => o.offerId !== offer.offerId));
       }
     },
     [],
   );
+
+  /** 暂停传输: 命令确认引擎侧已暂停后, 本地同步条目状态(引擎无 Paused 事件) */
+  const pauseTransfer = useCallback((transferId: string) => {
+    api
+      .pause(transferId)
+      .then((ok) => {
+        if (ok) dispatch({ type: "setPaused", transferId, paused: true });
+      })
+      .catch(console.error);
+  }, []);
+
+  /** 继续传输(与 pauseTransfer 对称) */
+  const resumeTransfer = useCallback((transferId: string) => {
+    api
+      .resume(transferId)
+      .then((ok) => {
+        if (ok) dispatch({ type: "setPaused", transferId, paused: false });
+      })
+      .catch(console.error);
+  }, []);
 
   /** 记录一条发出的文本进消息流(聊天输入框发送成功后调用) */
   const addSentText = useCallback((peerName: string, text: string) => {
@@ -400,6 +444,8 @@ export function useDeskmate() {
     sendFiles,
     sendClipboardImage,
     respondOffer,
+    pauseTransfer,
+    resumeTransfer,
     getPin,
     rememberPin,
     addSentText,

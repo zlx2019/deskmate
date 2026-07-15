@@ -34,10 +34,36 @@ pub const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 /// 单个候选地址的 TCP 连接超时(多网卡逐个尝试, 不宜过长)
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// 数据通道空闲上限: 单次 chunk 读/写超过该时长无进展即中断(保留断点可续传)
+///
+/// 取长值的原因: 一端本地暂停不会通知对端(协议无 Paused 事件),
+/// 对端表现为长时间收不到/发不出数据 —— 短超时会误杀合法暂停。
+/// 该值同时是恶意"半开连接"占用资源的时间上限。
+pub const DATA_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+// ---- 接收端连接治理(receiver)----
+
+/// 并发连接数上限: 超出直接拒绝新连接(防 slow-loris 耗尽 fd/内存)
+///
+/// 正常场景每对端占 1-2 条(控制 + 数据), 128 足够宽松。
+pub const MAX_CONCURRENT_CONNECTIONS: usize = 128;
+
+/// 未认证阶段(TLS 握手 + 首帧)的超时, 挡住"连上后不说话"的占坑连接
+pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 已接受但发送方一直未建数据连接的任务的存活上限, 到期清理(防泄漏)
+pub const PENDING_TTL: Duration = Duration::from_secs(300);
+
+/// 过期任务的清扫周期
+pub const PENDING_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+
 // ---- 接收端 PIN 门(receiver)----
 
 /// PIN 暴力破解限速窗口
 pub const PIN_WINDOW: Duration = Duration::from_secs(60);
 
-/// 窗口内允许的最大失败次数, 达到后整窗一律拒绝
+/// 窗口内允许的最大失败次数, 达到后该来源整窗一律拒绝
 pub const PIN_MAX_FAILURES: u32 = 5;
+
+/// 同时追踪失败计数的来源(TLS 指纹)上限, 超出保守拒绝新来源(防表膨胀)
+pub const PIN_TRACK_CAP: usize = 1024;

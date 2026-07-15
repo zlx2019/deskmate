@@ -44,6 +44,9 @@ pub struct HistoryStore {
     data_dir: PathBuf,
     /// 全部条目, 最新在前
     entries: Mutex<Vec<HistoryEntry>>,
+    /// 落盘互斥: 并发 flush 时两次 fs::write 交错会截断/损坏 JSON,
+    /// load 把损坏当空文件, 等于静默丢掉全部历史
+    io_lock: Mutex<()>,
 }
 
 impl HistoryStore {
@@ -56,6 +59,7 @@ impl HistoryStore {
         Self {
             data_dir: data_dir.to_path_buf(),
             entries: Mutex::new(entries),
+            io_lock: Mutex::new(()),
         }
     }
 
@@ -92,9 +96,10 @@ impl HistoryStore {
 
     /// 把当前内存快照写盘(阻塞调用, 只在线程池内使用)
     ///
-    /// 并发追加时后台任务可能乱序执行, 但每次都取"此刻最新"快照,
-    /// 最终写入的内容与内存一致。
+    /// 快照与写盘整体持 io_lock 串行: 排在后面的 flush 等锁后取到的
+    /// 一定是更新的快照, 最终文件内容与内存一致, 且不会交错写坏 JSON。
     fn flush(&self) {
+        let _io = lock(&self.io_lock);
         let json = {
             let entries = lock(&self.entries);
             serde_json::to_vec_pretty(&*entries).unwrap_or_default()
