@@ -232,6 +232,8 @@ export default function App() {
             texts={dm.texts}
             peers={peerList}
             getPin={dm.getPin}
+            onPause={dm.pauseTransfer}
+            onResume={dm.resumeTransfer}
             onPinLearned={dm.rememberPin}
             onTextSent={dm.addSentText}
             onSendImage={dm.sendClipboardImage}
@@ -242,9 +244,12 @@ export default function App() {
         </aside>
       </div>
 
-      {/* 弹窗: 接收确认按到达顺序排队, 一次只显示一个 */}
+      {/* 弹窗: 接收确认按到达顺序排队, 一次只显示一个
+          key 按 offerId 强制重挂载: 否则队首从 A 换 B 时 React 复用实例,
+          A 的保存目录/冲突选择会泄漏给 B */}
       {dm.offers[0] && (
         <OfferModal
+          key={dm.offers[0].offerId}
           offer={dm.offers[0]}
           avatarSrc={srcOf(dm.offers[0].peerAvatar)}
           onRespond={dm.respondOffer}

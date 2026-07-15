@@ -28,7 +28,7 @@ use crate::tls::TlsError;
 
 /// 数据块大小与决策超时见集中调优模块; re-export 保持既有引用路径
 pub use crate::config::CHUNK_SIZE;
-pub(crate) use crate::config::OFFER_TIMEOUT;
+pub(crate) use crate::config::{DATA_IDLE_TIMEOUT, OFFER_TIMEOUT};
 
 /// 未完成文件的临时后缀
 pub const PART_SUFFIX: &str = ".deskmate.part";
@@ -81,6 +81,9 @@ pub enum TransferError {
     /// 数据通道引用了不存在的传输任务
     #[error("未知的传输任务: {0}")]
     UnknownTransfer(String),
+    /// 同一任务已有进行中的数据会话(拒绝并发连接, 防 .part 互写)
+    #[error("任务已有进行中的数据会话: {0}")]
+    DuplicateDataSession(String),
     /// 断点续传不可用(对端元数据丢失 / 源文件已变化)
     #[error("无法续传: {0}")]
     ResumeUnavailable(String),
@@ -409,6 +412,25 @@ pub(crate) async fn wait_if_paused(
     }
 }
 
+/// 等待任一控制通道出现新状态(哪端变化不重要, 调用方回头重新合并评估)
+///
+/// sender 已 drop(changed 返回 Err)的通道转为永久挂起, 把进展让给另一
+/// 通道或调用方 select 里的其他分支 —— 立即返回会造成忙循环。
+async fn changed_either(
+    local: &mut watch::Receiver<ControlState>,
+    remote: &mut watch::Receiver<ControlState>,
+) {
+    async fn wait_one(r: &mut watch::Receiver<ControlState>) {
+        if r.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+    tokio::select! {
+        _ = wait_one(local) => {}
+        _ = wait_one(remote) => {}
+    }
+}
+
 /// 优雅关闭连接: 发送 close_notify 后排空对端数据直至 EOF
 ///
 /// TLS 双向 close_notify 场景下, 若一端 close 时接收缓冲还有未读数据
@@ -463,6 +485,9 @@ pub(crate) async fn hash_prefix(
 ///
 /// 收发双方共用的 chunk 循环骨架(暂停等待 → 读 → 哈希 → 写 → 进度);
 /// 进度从 `start` 起算, 提前 EOF 以 `eof_msg` 报错。
+///
+/// 读写都与控制信号、空闲超时竞速: 对端停发/停读时本端的取消不再被
+/// 阻塞 I/O 拖住, 长时间无进展按空闲中断(保留断点可续传)。
 #[expect(clippy::too_many_arguments, reason = "内部装配函数, 参数即搬运上下文")]
 async fn pump_chunks<R, W>(
     r: &mut R,
@@ -487,7 +512,14 @@ where
         let want = buf
             .len()
             .min(usize::try_from(remaining).unwrap_or(buf.len()));
-        let n = r.read(&mut buf[..want]).await?;
+        // 读一块: read 取消安全(被打断即未消费), 信号触发回循环头重新评估
+        let n = tokio::select! {
+            got = r.read(&mut buf[..want]) => got?,
+            _ = changed_either(local, remote) => continue,
+            _ = tokio::time::sleep(DATA_IDLE_TIMEOUT) => {
+                return Err(TransferError::Timeout("数据通道读空闲"));
+            }
+        };
         if n == 0 {
             return Err(TransferError::Io(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
@@ -495,12 +527,50 @@ where
             )));
         }
         hasher.update(&buf[..n]);
-        w.write_all(&buf[..n]).await?;
+        write_all_controlled(w, &buf[..n], local, remote).await?;
         remaining -= n as u64;
         done += n as u64;
         on_progress(done);
     }
-    w.flush().await?;
+    // flush 同样可能卡在停读的对端上, 一并限时
+    tokio::time::timeout(DATA_IDLE_TIMEOUT, w.flush())
+        .await
+        .map_err(|_| TransferError::Timeout("数据通道写空闲"))??;
+    Ok(())
+}
+
+/// 可中断的 write_all: 逐段写入, 每段与控制信号、空闲超时竞速
+///
+/// 块内只响应取消 —— 数据已进哈希器, 半途弃写会让流错位, 暂停留到
+/// 下一块的循环头生效; 单次 write 取消安全(未被接受的字节不会半写)。
+async fn write_all_controlled<W>(
+    w: &mut W,
+    mut data: &[u8],
+    local: &mut watch::Receiver<ControlState>,
+    remote: &mut watch::Receiver<ControlState>,
+) -> Result<(), TransferError>
+where
+    W: AsyncWrite + Unpin,
+{
+    while !data.is_empty() {
+        if (*local.borrow()).max(*remote.borrow()) == ControlState::Cancelled {
+            return Err(TransferError::Cancelled);
+        }
+        let n = tokio::select! {
+            wrote = w.write(data) => wrote?,
+            _ = changed_either(local, remote) => continue,
+            _ = tokio::time::sleep(DATA_IDLE_TIMEOUT) => {
+                return Err(TransferError::Timeout("数据通道写空闲"));
+            }
+        };
+        if n == 0 {
+            return Err(TransferError::Io(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "数据通道写入零字节",
+            )));
+        }
+        data = &data[n..];
+    }
     Ok(())
 }
 
