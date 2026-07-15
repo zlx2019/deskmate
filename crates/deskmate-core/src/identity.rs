@@ -143,6 +143,7 @@ impl DeviceIdentity {
             fingerprint: self.fingerprint.clone(),
             platform: platform(),
             avatar: self.avatar.clone(),
+            os_version: Some(os_version().to_string()),
         }
     }
 }
@@ -150,6 +151,18 @@ impl DeviceIdentity {
 /// 本机平台标识(macos / windows / linux)
 pub fn platform() -> String {
     std::env::consts::OS.to_string()
+}
+
+/// 本机操作系统版本描述(如 "Mac OS 15.3.1")
+///
+/// 检测有系统调用开销, OnceLock 缓存进程生命周期内的结果
+/// (peer_info 在心跳/握手路径被频繁调用)。
+pub fn os_version() -> &'static str {
+    static OS_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    OS_VERSION.get_or_init(|| {
+        let info = os_info::get();
+        format!("{} {}", info.os_type(), info.version())
+    })
 }
 
 /// 计算证书指纹: BLAKE3(cert_der) 的 hex 小写
@@ -220,5 +233,13 @@ mod tests {
         let b = DeviceIdentity::load_or_create(&d2.0).unwrap();
         assert_ne!(a.fingerprint, b.fingerprint);
         assert_ne!(a.device_id, b.device_id);
+    }
+
+    /// OS 版本检测应产出非空描述并随身份广播
+    #[test]
+    fn os_version_is_detected() {
+        let v = os_version();
+        println!("detected os version: {v}");
+        assert!(!v.trim().is_empty());
     }
 }

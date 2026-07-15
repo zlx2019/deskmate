@@ -79,6 +79,8 @@ pub struct PeerDto {
     pub port: u16,
     /// 内置头像(emoji); None 时前端用首字母样式
     pub avatar: Option<String>,
+    /// 操作系统版本描述(如 "Mac OS 15.3.1"; 旧版本对端为 None)
+    pub os_version: Option<String>,
 }
 
 impl From<&Peer> for PeerDto {
@@ -91,6 +93,7 @@ impl From<&Peer> for PeerDto {
             addrs: p.addrs.iter().map(|a| a.to_string()).collect(),
             port: p.port,
             avatar: p.info.avatar.clone(),
+            os_version: p.info.os_version.clone(),
         }
     }
 }

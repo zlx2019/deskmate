@@ -10,6 +10,8 @@ export interface PeerDto {
   port: number;
   /** 内置头像(emoji); null 时用首字母样式 */
   avatar: string | null;
+  /** 操作系统版本描述(如 "Mac OS 15.3.1"; 旧版本对端为 null) */
+  osVersion: string | null;
 }
 
 /** 本机信息 */

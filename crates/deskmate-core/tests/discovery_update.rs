@@ -19,6 +19,7 @@ fn test_info(name: &str, fingerprint: &str) -> PeerInfo {
         fingerprint: fingerprint.to_string(),
         platform: "test".to_string(),
         avatar: None,
+        os_version: None,
     }
 }
 

@@ -17,13 +17,6 @@ function initialOf(name: string): string {
   return [...name][0]?.toUpperCase() ?? "?";
 }
 
-/** 平台徽标短名 */
-function platformTag(platform: string): string {
-  if (platform === "macos") return "mac";
-  if (platform === "windows") return "win";
-  return platform.slice(0, 3);
-}
-
 /** 圆形头像(节点与本机通用): 图片 > emoji > 首字母 三级回退 */
 export function Avatar({
   name,
@@ -330,9 +323,6 @@ export const Radar = memo(function Radar({
                     src={srcOf(peer.avatar)}
                   />
                 </div>
-                <span className="gauge-label absolute -bottom-0.5 -right-2 rounded-full border border-line-2 bg-panel px-1.5 !text-[8px] leading-3.5">
-                  {platformTag(peer.platform)}
-                </span>
               </div>
               <div className="mx-auto mt-2 w-fit max-w-32 truncate rounded-full border border-line bg-panel px-2.5 py-0.5 text-xs text-fog">
                 {peer.name}
