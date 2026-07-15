@@ -83,6 +83,7 @@ pub fn run() {
             commands::get_self_info,
             commands::list_peers,
             commands::send_files_to,
+            commands::send_clipboard_image,
             commands::send_text_to,
             commands::respond_offer,
             commands::precheck_receive,

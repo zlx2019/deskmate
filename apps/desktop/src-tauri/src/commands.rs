@@ -86,6 +86,47 @@ pub async fn send_files_to(
     Ok(transfer_id)
 }
 
+/// 发送剪贴板截图: 前端编码好的 PNG 字节落成临时文件后走文件传输链
+///
+/// 对端收到的就是普通 PNG 文件(确认/白名单/进度/历史/PIN 重试全复用,
+/// 协议零改动)。临时文件不主动清理, 交由系统温存目录策略回收 ——
+/// 失败重试(interrupted_sends 登记的就是该路径)还需要它。
+#[tauri::command]
+pub async fn send_clipboard_image(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    fingerprint: String,
+    file_name: String,
+    data: Vec<u8>,
+    pin: Option<String>,
+) -> Result<String, String> {
+    // 文件名由前端生成(screenshot-时间戳.png), 白名单校验防路径注入
+    let legal = !file_name.is_empty()
+        && !file_name.contains("..")
+        && file_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if !legal {
+        return Err("非法的截图文件名".to_string());
+    }
+    if data.is_empty() {
+        return Err("截图数据为空".to_string());
+    }
+    let path = std::env::temp_dir().join(&file_name);
+    std::fs::write(&path, &data).map_err(|e| format!("写入临时截图失败: {e}"))?;
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    spawn_transfer_task(
+        &app,
+        &state,
+        transfer_id.clone(),
+        fingerprint,
+        vec![path],
+        SendMode::Fresh { pin },
+    )?;
+    Ok(transfer_id)
+}
+
 /// 用给定 PIN 重试被拒(pin_required)的发送任务, 复用原 transfer_id 与进度条目
 #[tauri::command]
 pub async fn retry_send_transfer(

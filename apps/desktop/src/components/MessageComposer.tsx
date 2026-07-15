@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../api";
+import { readClipboardImagePng } from "../clipboard";
 import { EVENTS } from "../events";
 import { type PeerDto } from "../types";
 
@@ -14,6 +15,7 @@ export function MessageComposer({
   getPin,
   onPinLearned,
   onSent,
+  onSendImage,
 }: {
   peers: PeerDto[];
   /** 会话缓存的对端 PIN */
@@ -22,6 +24,8 @@ export function MessageComposer({
   onPinLearned: (fingerprint: string, pin: string) => void;
   /** 发送成功后回调(把消息记入消息流) */
   onSent: (peerName: string, text: string) => void;
+  /** 发送剪贴板截图(走文件传输链, 由快捷键触发) */
+  onSendImage: (peer: PeerDto, fileName: string, bytes: number[]) => Promise<void>;
 }) {
   // 文本必须逐字节原样发送, 不做任何 trim
   const [text, setText] = useState("");
@@ -65,28 +69,41 @@ export function MessageComposer({
     if (await deliver(text)) setText("");
   };
 
-  // 全局快捷键: 读剪贴板发给当前选中设备(ref 透传避免闭包过期)
+  // 全局快捷键: 读剪贴板发给当前选中设备, 截图优先于文本(ref 透传避免闭包过期)
   const deliverRef = useRef(deliver);
   deliverRef.current = deliver;
   const targetRef = useRef(target);
   targetRef.current = target;
+  const onSendImageRef = useRef(onSendImage);
+  onSendImageRef.current = onSendImage;
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let alive = true;
     let unlisten: UnlistenFn | undefined;
     listen(EVENTS.HOTKEY_SEND_CLIPBOARD, async () => {
-      if (!targetRef.current) {
+      const peer = targetRef.current;
+      if (!peer) {
         api.notify("deskmate", "没有在线设备, 剪贴板未发送").catch(console.error);
+        return;
+      }
+      // 剪贴板是截图: 编码 PNG 走文件传输链(对端按普通文件接收)
+      const image = await readClipboardImagePng();
+      if (image) {
+        try {
+          await onSendImageRef.current(peer, image.name, image.bytes);
+          api.notify("截图发送中", `发往 ${peer.name}`).catch(console.error);
+        } catch (e) {
+          api.notify("截图发送失败", String(e)).catch(console.error);
+        }
         return;
       }
       const clip = await readText().catch(() => null);
       if (!clip) {
-        api.notify("deskmate", "剪贴板没有文本, 未发送").catch(console.error);
+        api.notify("deskmate", "剪贴板没有文本或截图, 未发送").catch(console.error);
         return;
       }
-      const name = targetRef.current.name;
       if (await deliverRef.current(clip)) {
-        api.notify("剪贴板已送达", `发往 ${name}`).catch(console.error);
+        api.notify("剪贴板已送达", `发往 ${peer.name}`).catch(console.error);
       } else {
         api.notify("剪贴板发送失败", "打开 deskmate 查看详情").catch(console.error);
       }
