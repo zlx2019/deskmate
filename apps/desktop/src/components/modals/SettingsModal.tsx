@@ -261,13 +261,11 @@ export function SettingsModal({
             />
             <ToggleRow
               label="隐身模式"
-              hint="别人的雷达看不到你, 你仍可看到别人并主动发送; 隐身期间对方无法向你发起传输"
               checked={settings.passive}
               onChange={(v) => setSettings({ ...settings, passive: v })}
             />
             <ToggleRow
               label="开机自启"
-              hint="登录后自动在后台启动(隐入托盘), 随时可接收文件"
               checked={settings.autostart}
               onChange={(v) => setSettings({ ...settings, autostart: v })}
             />
