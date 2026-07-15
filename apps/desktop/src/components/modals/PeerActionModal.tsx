@@ -27,7 +27,7 @@ export function PeerActionModal({
   onPinLearned: (fingerprint: string, pin: string) => void;
   onSendFiles: (peer: PeerDto, paths: string[]) => void;
   /** 发送剪贴板截图(走文件传输链) */
-  onSendImage: (peer: PeerDto, fileName: string, bytes: number[]) => Promise<void>;
+  onSendImage: (peer: PeerDto, fileName: string, bytes: Uint8Array) => Promise<void>;
   onClose: () => void;
 }) {
   // 文本内容必须逐字节原样发送, 不做任何 trim
@@ -107,16 +107,21 @@ export function PeerActionModal({
 
   /** 剪贴板一键发送: 截图优先走文件传输链, 否则按文本直接送达 */
   const sendClipboard = async () => {
-    const image = await readClipboardImagePng();
-    if (image) {
-      try {
+    // 图片分支同样占用 sending, 让按钮 disabled 生效防连击
+    setSending(true);
+    try {
+      const image = await readClipboardImagePng();
+      if (image) {
         await onSendImage(peer, image.name, image.bytes);
         // 截图按文件任务发送, 进度在右栏; 关弹窗让用户看到任务条目
         onClose();
-      } catch (e) {
-        setSentTip(String(e));
+        return;
       }
+    } catch (e) {
+      setSentTip(String(e));
       return;
+    } finally {
+      setSending(false);
     }
     const clip = await readText().catch(() => null);
     if (!clip) {

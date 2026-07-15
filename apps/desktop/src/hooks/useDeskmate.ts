@@ -300,26 +300,30 @@ export function useDeskmate() {
     };
   }, []);
 
-  /** 发送文件到节点(paths 为绝对路径) */
-  const sendFiles = async (peer: PeerDto, paths: string[]) => {
-    const transferId = await api.sendFiles(peer.fingerprint, paths, getPin(peer.fingerprint));
-    dispatch({
-      type: "begin",
-      transferId,
-      direction: "send",
-      peerName: peer.name,
-      peerFingerprint: peer.fingerprint,
-    });
-  };
+  /** 发送文件到节点(paths 为绝对路径; useCallback 与其余操作保持引用稳定) */
+  const sendFiles = useCallback(
+    async (peer: PeerDto, paths: string[]) => {
+      const transferId = await api.sendFiles(peer.fingerprint, paths, getPin(peer.fingerprint));
+      dispatch({
+        type: "begin",
+        transferId,
+        direction: "send",
+        peerName: peer.name,
+        peerFingerprint: peer.fingerprint,
+      });
+    },
+    [getPin],
+  );
 
-  /** 发送剪贴板截图到节点(PNG 走文件传输链, 建立与文件发送一致的进度条目;
+  /** 发送剪贴板截图到节点(先经 raw 通道暂存字节, 再走文件传输链;
    * useCallback 保引用稳定, 供 memo 的 TransferPanel 使用) */
   const sendClipboardImage = useCallback(
-    async (peer: PeerDto, fileName: string, bytes: number[]) => {
+    async (peer: PeerDto, fileName: string, bytes: Uint8Array) => {
+      const staged = await api.stageClipboardImage(bytes);
       const transferId = await api.sendClipboardImage(
         peer.fingerprint,
         fileName,
-        bytes,
+        staged,
         getPin(peer.fingerprint),
       );
       dispatch({
@@ -334,23 +338,22 @@ export function useDeskmate() {
   );
 
   /** 应答接收请求; overwrite 为本次的同名冲突决策 */
-  const respondOffer = async (
-    offer: OfferDto,
-    accept: boolean,
-    opts?: { saveDir?: string; overwrite?: boolean },
-  ) => {
-    await api.respondOffer(offer.offerId, accept, opts?.saveDir, opts?.overwrite ?? false);
-    setOffers((prev) => prev.filter((o) => o.offerId !== offer.offerId));
-    if (accept) {
-      dispatch({
-        type: "begin",
-        transferId: offer.transferId,
-        direction: "recv",
-        peerName: offer.peerName,
-        peerFingerprint: offer.peerFingerprint,
-      });
-    }
-  };
+  const respondOffer = useCallback(
+    async (offer: OfferDto, accept: boolean, opts?: { saveDir?: string; overwrite?: boolean }) => {
+      await api.respondOffer(offer.offerId, accept, opts?.saveDir, opts?.overwrite ?? false);
+      setOffers((prev) => prev.filter((o) => o.offerId !== offer.offerId));
+      if (accept) {
+        dispatch({
+          type: "begin",
+          transferId: offer.transferId,
+          direction: "recv",
+          peerName: offer.peerName,
+          peerFingerprint: offer.peerFingerprint,
+        });
+      }
+    },
+    [],
+  );
 
   /** 记录一条发出的文本进消息流(聊天输入框发送成功后调用) */
   const addSentText = useCallback((peerName: string, text: string) => {

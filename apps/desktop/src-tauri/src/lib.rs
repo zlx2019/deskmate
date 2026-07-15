@@ -46,7 +46,8 @@ pub fn run() {
                 let hotkey = state::lock(&app.state::<state::AppState>().settings)
                     .send_clipboard_hotkey
                     .clone();
-                if let Err(e) = commands::apply_clipboard_hotkey(app.handle(), None, hotkey.as_deref())
+                if let Err(e) =
+                    commands::prefs::apply_clipboard_hotkey(app.handle(), None, hotkey.as_deref())
                 {
                     tracing::warn!("启动注册剪贴板快捷键失败: {e}");
                 }
@@ -82,20 +83,21 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_self_info,
             commands::list_peers,
-            commands::send_files_to,
-            commands::send_clipboard_image,
-            commands::send_text_to,
-            commands::respond_offer,
-            commands::precheck_receive,
-            commands::pause_transfer,
-            commands::resume_transfer,
-            commands::cancel_transfer,
-            commands::resume_send_transfer,
-            commands::retry_send_transfer,
-            commands::get_settings,
-            commands::save_settings,
-            commands::set_avatar_image,
-            commands::get_avatar_image,
+            commands::send::send_files_to,
+            commands::send::stage_clipboard_image,
+            commands::send::send_clipboard_image,
+            commands::send::send_text_to,
+            commands::send::resume_send_transfer,
+            commands::send::retry_send_transfer,
+            commands::receive::respond_offer,
+            commands::receive::precheck_receive,
+            commands::receive::pause_transfer,
+            commands::receive::resume_transfer,
+            commands::receive::cancel_transfer,
+            commands::prefs::get_settings,
+            commands::prefs::save_settings,
+            commands::prefs::set_avatar_image,
+            commands::prefs::get_avatar_image,
             commands::get_history,
             commands::append_history,
             commands::delete_history,

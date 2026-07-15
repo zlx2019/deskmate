@@ -5,7 +5,7 @@ import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 
 /** 剪贴板截图载荷: PNG 字节 + 建议文件名 */
 export interface ClipboardImage {
-  bytes: number[];
+  bytes: Uint8Array;
   name: string;
 }
 
@@ -36,7 +36,7 @@ export async function readClipboardImagePng(): Promise<ClipboardImage | null> {
     ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
     const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
     if (!blob) return null;
-    const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+    const bytes = new Uint8Array(await blob.arrayBuffer());
     return { bytes, name: screenshotName() };
   } catch {
     return null;
