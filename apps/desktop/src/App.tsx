@@ -234,6 +234,8 @@ export default function App() {
             getPin={dm.getPin}
             onPinLearned={dm.rememberPin}
             onTextSent={dm.addSentText}
+            onRemoveText={dm.removeText}
+            onClearTexts={dm.clearTexts}
             onPinRetry={setPinRetry}
           />
         </aside>

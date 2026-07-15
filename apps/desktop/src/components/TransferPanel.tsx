@@ -4,6 +4,7 @@ import { memo, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { humanBytes, type PeerDto, type TextMsg, type TransferItem } from "../types";
+import { ClearButton } from "./ClearButton";
 import { HistoryList } from "./HistoryList";
 import { MessageComposer } from "./MessageComposer";
 
@@ -146,8 +147,8 @@ function PanelButton({
   );
 }
 
-/** 文本消息卡片(按方向区分"来自/发往") */
-function TextCard({ msg }: { msg: TextMsg }) {
+/** 文本消息卡片(按方向区分"来自/发往", 可单条删除) */
+function TextCard({ msg, onRemove }: { msg: TextMsg; onRemove: (id: string) => void }) {
   const out = msg.direction === "out";
   return (
     <div className="rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition-colors duration-300">
@@ -158,6 +159,9 @@ function TextCard({ msg }: { msg: TextMsg }) {
           <span className="text-fog">{msg.peerName}</span>
         </span>
         <PanelButton onClick={() => navigator.clipboard.writeText(msg.text)}>复制</PanelButton>
+        <PanelButton danger onClick={() => onRemove(msg.id)}>
+          删除
+        </PanelButton>
       </div>
       {/* 逐字节原样展示: pre-wrap 保留空白与换行 */}
       <div className="mt-1.5 max-h-28 select-text overflow-auto whitespace-pre-wrap break-all rounded border border-line/60 bg-abyss/60 px-2.5 py-1.5 font-gauge text-xs text-fog/90">
@@ -198,6 +202,8 @@ export const TransferPanel = memo(function TransferPanel({
   getPin,
   onPinLearned,
   onTextSent,
+  onRemoveText,
+  onClearTexts,
   onPinRetry,
 }: {
   transfers: TransferItem[];
@@ -208,6 +214,10 @@ export const TransferPanel = memo(function TransferPanel({
   onPinLearned: (fingerprint: string, pin: string) => void;
   /** 文本发送成功(记入消息流) */
   onTextSent: (peerName: string, text: string) => void;
+  /** 删除单条文字消息 */
+  onRemoveText: (id: string) => void;
+  /** 清空全部文字消息 */
+  onClearTexts: () => void;
   onPinRetry: (item: TransferItem) => void;
 }) {
   // 上半区分页: 传输任务 / 互传记录(切回记录页时重新拉取)
@@ -244,12 +254,17 @@ export const TransferPanel = memo(function TransferPanel({
         <span className="rounded-full bg-chip px-2 py-px text-[11px] font-medium text-sonar">
           {texts.length}
         </span>
+        {texts.length > 0 && (
+          <span className="ml-auto">
+            <ClearButton title="清空文字消息" onConfirm={onClearTexts} />
+          </span>
+        )}
       </div>
       <div className="flex min-h-0 flex-[2] flex-col gap-2.5 overflow-y-auto px-3 py-3">
         {texts.length === 0 ? (
           <div className="px-4 py-6 text-center text-xs text-mist/70">暂无文本消息</div>
         ) : (
-          texts.map((m) => <TextCard key={m.id} msg={m} />)
+          texts.map((m) => <TextCard key={m.id} msg={m} onRemove={onRemoveText} />)
         )}
       </div>
       <MessageComposer
