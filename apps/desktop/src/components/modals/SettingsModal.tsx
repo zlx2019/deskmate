@@ -255,6 +255,12 @@ export function SettingsModal({
             />
 
             <ToggleRow
+              label="收到文本自动复制"
+              hint="节点发来的文本消息自动写入系统剪贴板, 到手即可粘贴(会覆盖剪贴板原有内容)"
+              checked={settings.autoCopyText}
+              onChange={(v) => setSettings({ ...settings, autoCopyText: v })}
+            />
+            <ToggleRow
               label="隐身模式(重启后生效)"
               hint="别人的雷达看不到你, 你仍可看到别人并主动发送; 隐身期间对方无法向你发起传输"
               checked={settings.passive}

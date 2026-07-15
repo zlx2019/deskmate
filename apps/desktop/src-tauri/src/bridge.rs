@@ -457,6 +457,8 @@ async fn pump_transfer_events(app: AppHandle, mut events_rx: mpsc::Receiver<Tran
                 active.remove(transfer_id);
                 progress_dirty = true;
             }
+            // 收到文本: 按设置自动写入系统剪贴板
+            TransferEvent::TextReceived { text, .. } => auto_copy_text(&app, text),
             _ => {}
         }
         if progress_dirty {
@@ -688,6 +690,18 @@ struct AvatarReadyDto {
 /// 头像哈希是否安全: 仅允许 hex 字符且长度受限(用于拼接缓存文件名, 防路径注入)
 pub(crate) fn is_safe_hash(hash: &str) -> bool {
     !hash.is_empty() && hash.len() <= 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// 收到文本时按设置自动写入系统剪贴板(开关默认关闭, 保存设置即时生效)
+fn auto_copy_text(app: &AppHandle, text: &str) {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let enabled = lock(&app.state::<AppState>().settings).auto_copy_text;
+    if !enabled {
+        return;
+    }
+    if let Err(e) = app.clipboard().write_text(text.to_string()) {
+        tracing::debug!("自动复制文本到剪贴板失败: {e}");
+    }
 }
 
 /// 传输关键节点发系统通知(进度类高频事件不通知)
