@@ -58,6 +58,8 @@ pub struct Settings {
     pub trusted: Vec<TrustedDevice>,
     /// 配对 PIN: 启用后对方发文件/文本必须携带正确 PIN(None 关闭, 即时生效)
     pub pin: Option<String>,
+    /// 收到文本时自动复制到系统剪贴板(即时生效)
+    pub auto_copy_text: bool,
 }
 
 impl Default for Settings {
@@ -72,6 +74,7 @@ impl Default for Settings {
             autostart: false,
             trusted: Vec::new(),
             pin: None,
+            auto_copy_text: false,
         }
     }
 }

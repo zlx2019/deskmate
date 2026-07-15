@@ -78,6 +78,8 @@ export interface Settings {
   trusted: TrustedDevice[];
   /** 配对 PIN: 启用后对方发文件/文本必须携带正确 PIN(null 关闭, 即时生效) */
   pin: string | null;
+  /** 收到文本时自动复制到系统剪贴板(即时生效) */
+  autoCopyText: boolean;
 }
 
 /** 内置头像库(设置页挑选, 随发现报文广播) */
