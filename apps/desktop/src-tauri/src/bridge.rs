@@ -713,7 +713,15 @@ fn notify_transfer_event(app: &AppHandle, event: &TransferEvent) {
             notify_if_unfocused(app, "deskmate", "传输意外中断, 未完成部分已保留");
         }
         TransferEvent::TextReceived { from, text } => {
-            notify_if_unfocused(app, &format!("{} 发来文本", from.name), &preview_of(text));
+            // 自动复制开启时在标题标注, 不用打开窗口就知道可以直接粘贴
+            // (事件泵先执行复制再走到这里, 文案与事实一致)
+            let copied = lock(&app.state::<AppState>().settings).auto_copy_text;
+            let title = if copied {
+                format!("{} 发来文本 · 已复制", from.name)
+            } else {
+                format!("{} 发来文本", from.name)
+            };
+            notify_if_unfocused(app, &title, &preview_of(text));
         }
         _ => {}
     }
