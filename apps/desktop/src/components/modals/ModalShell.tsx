@@ -65,7 +65,7 @@ export function Button({
   );
 }
 
-/** 开关行: 标签 + 说明 + 滑块 */
+/** 开关行: 标签 + 可选说明 + 滑块 */
 export function ToggleRow({
   label,
   hint,
@@ -73,7 +73,7 @@ export function ToggleRow({
   onChange,
 }: {
   label: string;
-  hint: string;
+  hint?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
@@ -81,7 +81,7 @@ export function ToggleRow({
     <div className="mt-3 flex items-center gap-3">
       <div className="min-w-0 flex-1">
         <div className="text-sm text-fog">{label}</div>
-        <div className="mt-0.5 text-[11px] text-mist">{hint}</div>
+        {hint && <div className="mt-0.5 text-[11px] text-mist">{hint}</div>}
       </div>
       <button
         onClick={() => onChange(!checked)}

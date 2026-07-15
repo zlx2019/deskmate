@@ -165,7 +165,7 @@ export function SettingsModal({
               />
             </div>
 
-            <div className="gauge-label mt-4 mb-1">默认下载目录(即时生效)</div>
+            <div className="gauge-label mt-4 mb-1">下载目录</div>
             <div className="flex gap-2">
               <input
                 readOnly
@@ -175,7 +175,7 @@ export function SettingsModal({
               <Button onClick={pickDir}>选择…</Button>
             </div>
 
-            <div className="gauge-label mt-4 mb-1">同名文件处理(即时生效)</div>
+            <div className="gauge-label mt-4 mb-1">同名文件处理</div>
             <div className="flex gap-1.5">
               {(
                 [
@@ -198,7 +198,7 @@ export function SettingsModal({
               ))}
             </div>
 
-            <div className="gauge-label mt-4 mb-1">监听端口(重启后生效)</div>
+            <div className="gauge-label mt-4 mb-1">监听端口</div>
             <input
               type="number"
               min={0}
@@ -244,7 +244,7 @@ export function SettingsModal({
               </>
             )}
 
-            <div className="gauge-label mt-4 mb-1">配对 PIN(即时生效)</div>
+            <div className="gauge-label mt-4 mb-1">配对 PIN</div>
             <input
               value={settings.pin ?? ""}
               onChange={(e) =>
@@ -255,13 +255,12 @@ export function SettingsModal({
             />
 
             <ToggleRow
-              label="收到文本自动复制"
-              hint="节点发来的文本消息自动写入系统剪贴板, 到手即可粘贴(会覆盖剪贴板原有内容)"
+              label="自动复制"
               checked={settings.autoCopyText}
               onChange={(v) => setSettings({ ...settings, autoCopyText: v })}
             />
             <ToggleRow
-              label="隐身模式(重启后生效)"
+              label="隐身模式"
               hint="别人的雷达看不到你, 你仍可看到别人并主动发送; 隐身期间对方无法向你发起传输"
               checked={settings.passive}
               onChange={(v) => setSettings({ ...settings, passive: v })}
@@ -273,8 +272,10 @@ export function SettingsModal({
               onChange={(v) => setSettings({ ...settings, autostart: v })}
             />
 
-            {/* 吸底操作栏: 长内容滚动时保存/取消始终可见 */}
-            <div className="sticky bottom-0 -mx-5 -mb-4 mt-5 flex items-center justify-end gap-3 border-t border-line bg-panel px-5 py-3">
+            {/* 吸底操作栏: 长内容滚动时保存/取消始终可见;
+                毛玻璃模式下 bg-panel 是半透明变量, 必须叠 backdrop-blur
+                把滚动上来的内容模糊掉, 否则文字会从按钮底下透出 */}
+            <div className="sticky bottom-0 -mx-5 -mb-4 mt-5 flex items-center justify-end gap-3 border-t border-line bg-panel px-5 py-3 backdrop-blur-xl">
               {tip && <span className="max-w-52 truncate text-xs text-alert">{tip}</span>}
               <Button onClick={onClose}>取消</Button>
               <Button variant="primary" onClick={save}>
