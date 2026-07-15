@@ -7,7 +7,6 @@ import { useDeskmate } from "./hooks/useDeskmate";
 import { Radar } from "./components/Radar";
 import { TransferPanel } from "./components/TransferPanel";
 import {
-  HistoryModal,
   OfferModal,
   PeerActionModal,
   PinModal,
@@ -91,7 +90,6 @@ export default function App() {
   const dm = useDeskmate();
   const [activePeer, setActivePeer] = useState<PeerDto | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
   // 待输入 PIN 重试的被拒任务
   const [pinRetry, setPinRetry] = useState<TransferItem | null>(null);
   // 主题偏好: localStorage 持久化, data-theme 驱动 CSS 变量整体换肤
@@ -169,7 +167,6 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (e.key === "Escape") {
         if (showSettings) setShowSettings(false);
-        else if (showHistory) setShowHistory(false);
         else if (pinRetry) setPinRetry(null);
         else if (activePeer) setActivePeer(null);
       } else if (mod && e.key === ",") {
@@ -186,7 +183,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showSettings, showHistory, pinRetry, activePeer]);
+  }, [showSettings, pinRetry, activePeer]);
 
   const self = dm.self;
   // 派生数组与回调保持引用稳定, 配合子组件 memo 隔离传输高频更新
@@ -194,7 +191,6 @@ export default function App() {
   const transferList = useMemo(() => Object.values(dm.transfers), [dm.transfers]);
   const toggleTheme = useCallback(() => setTheme((t) => (t === "dark" ? "light" : "dark")), []);
   const openSettings = useCallback(() => setShowSettings(true), []);
-  const openHistory = useCallback(() => setShowHistory(true), []);
   /** 取头像图片 URL(非图片头像或未就绪时为 undefined) */
   const srcOf = (avatar: string | null | undefined) => {
     const hash = avatarHashOf(avatar);
@@ -234,7 +230,10 @@ export default function App() {
           <TransferPanel
             transfers={transferList}
             texts={dm.texts}
-            onShowHistory={openHistory}
+            peers={peerList}
+            getPin={dm.getPin}
+            onPinLearned={dm.rememberPin}
+            onTextSent={dm.addSentText}
             onPinRetry={setPinRetry}
           />
         </aside>
@@ -272,7 +271,6 @@ export default function App() {
           onClose={() => setPinRetry(null)}
         />
       )}
-      {showHistory && <HistoryModal onClose={() => setShowHistory(false)} />}
       {showSettings && self && (
         <SettingsModal
           fingerprint={self.fingerprint}

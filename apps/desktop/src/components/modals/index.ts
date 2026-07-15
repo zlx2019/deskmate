@@ -3,5 +3,4 @@
 export { OfferModal } from "./OfferModal";
 export { PeerActionModal } from "./PeerActionModal";
 export { PinModal } from "./PinModal";
-export { HistoryModal } from "./HistoryModal";
 export { SettingsModal } from "./SettingsModal";
