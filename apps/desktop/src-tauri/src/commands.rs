@@ -464,6 +464,44 @@ pub fn append_history(state: State<'_, AppState>, entry: crate::history::History
     state.history.append(entry);
 }
 
+/// 系统通知(未聚焦才发; 供前端在窗口可能隐藏的场景反馈, 如快捷键发送结果)
+#[tauri::command]
+pub fn notify(app: tauri::AppHandle, title: String, body: String) {
+    crate::bridge::notify_if_unfocused(&app, &title, &body);
+}
+
+/// 应用"发送剪贴板"全局快捷键: 注销旧值后注册新值(None/空 = 仅注销)
+///
+/// 返回错误字符串供设置保存时回显(格式非法或与其他应用冲突)。
+pub(crate) fn apply_clipboard_hotkey(
+    app: &tauri::AppHandle,
+    old: Option<&str>,
+    new: Option<&str>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+    let gs = app.global_shortcut();
+    // 旧值解析失败说明从未注册成功, 忽略即可
+    if let Some(old) = old.filter(|s| !s.is_empty())
+        && let Ok(sc) = old.parse::<Shortcut>()
+    {
+        let _ = gs.unregister(sc);
+    }
+    let Some(new) = new.filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let sc: Shortcut = new.parse().map_err(|e| format!("快捷键格式无效: {e}"))?;
+    gs.on_shortcut(sc, |app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            // 目标设备与 PIN 会话缓存都在前端, 通知前端读剪贴板并发送
+            if let Err(e) = app.emit(crate::bridge::events::HOTKEY_SEND_CLIPBOARD, ()) {
+                tracing::debug!("快捷键事件发射失败: {e}");
+            }
+        }
+    })
+    .map_err(|e| format!("快捷键注册失败(可能与其他应用冲突): {e}"))
+}
+
 /// 系统窗口材质(vibrancy/mica)是否生效; 前端据此启用半透明背景
 #[tauri::command]
 pub fn window_effects_active() -> bool {
@@ -484,6 +522,17 @@ pub fn save_settings(
     settings: Settings,
 ) -> Result<(), String> {
     std::fs::create_dir_all(&settings.download_dir).map_err(|e| format!("下载目录不可用: {e}"))?;
+    // 全局快捷键先于落盘应用: 注册失败(格式/冲突)时整个保存失败, 避免"文件已存新值但未生效"
+    {
+        let old = lock(&state.settings).send_clipboard_hotkey.clone();
+        if old != settings.send_clipboard_hotkey {
+            apply_clipboard_hotkey(
+                &app,
+                old.as_deref(),
+                settings.send_clipboard_hotkey.as_deref(),
+            )?;
+        }
+    }
     settings
         .save(&state.data_dir)
         .map_err(|e| format!("保存设置失败: {e}"))?;

@@ -46,4 +46,6 @@ export const api = {
   /** 读取头像字节: hash 缺省取本机自定义头像, 传入则查对端缓存(未命中 null) */
   getAvatarImage: (hash?: string) =>
     invoke<number[] | null>("get_avatar_image", { hash: hash ?? null }),
+  /** 系统通知(未聚焦才发; 窗口可能隐藏的场景反馈用, 如快捷键发送结果) */
+  notify: (title: string, body: string) => invoke<void>("notify", { title, body }),
 };
