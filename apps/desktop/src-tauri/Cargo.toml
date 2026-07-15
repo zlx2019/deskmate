@@ -1,6 +1,6 @@
 [package]
 name = "deskmate-desktop"
-description = "deskmate 桌面端: 局域网文件/文本互传"
+description = "deskmate desktop app"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,7 +15,6 @@ name = "deskmate_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-# config-toml: 使用 Tauri.toml(TOML 格式)作为应用配置文件
 tauri-build = { version = "2", features = ["config-toml"] }
 
 [dependencies]
@@ -29,9 +28,6 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 fs4.workspace = true
 blake3.workspace = true
-# config-toml: 使用 Tauri.toml 配置; tray-icon: 系统托盘(关窗口隐入托盘);
-# image-png: 运行时解码 PNG(加载托盘模板图标)
-# macos-private-api: 透明窗口(毛玻璃背景)在 macOS 依赖私有 API, 不上 App Store 无碍
 tauri = { version = "2", features = [
   "config-toml",
   "tray-icon",
@@ -51,4 +47,3 @@ tauri-plugin-autostart = "2"
 # 系统剪贴板读写(剪贴板一键发送, 2026-07-14 批准)
 tauri-plugin-clipboard-manager = "2"
 
-# 说明: 本 crate 为应用壳, 含大量框架宏生成代码, 不继承 workspace 的严格 lints

@@ -1,6 +1,6 @@
 [package]
 name = "deskmate-core"
-description = "deskmate 核心引擎: 节点发现、传输协议、文件收发与设备身份"
+description = "deskmate core engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
