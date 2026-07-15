@@ -3,6 +3,7 @@
 mod bridge;
 mod commands;
 mod history;
+mod locale;
 mod settings;
 mod state;
 
@@ -191,11 +192,28 @@ fn show_main_window(app: &tauri::AppHandle) {
     bridge::clear_unread(app);
 }
 
+/// 构建托盘菜单(按当前语言取文案; 初建与语言切换共用)
+fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let texts = locale::current(app);
+    let show = MenuItem::with_id(app, "show", texts.tray_show, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", texts.tray_quit, true, None::<&str>)?;
+    Menu::with_items(app, &[&show, &quit])
+}
+
+/// 语言切换后重建托盘菜单(菜单项文案是创建时固定的, 换语言需整体替换)
+pub(crate) fn refresh_tray_menu(app: &tauri::AppHandle) {
+    let result = build_tray_menu(app).and_then(|menu| match app.tray_by_id("main-tray") {
+        Some(tray) => tray.set_menu(Some(menu)),
+        None => Ok(()),
+    });
+    if let Err(e) = result {
+        tracing::warn!("托盘菜单语言刷新失败: {e}");
+    }
+}
+
 /// 创建系统托盘: 左键单击亮窗口, 菜单提供显示/退出
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "显示 deskmate", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let menu = build_tray_menu(app)?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)

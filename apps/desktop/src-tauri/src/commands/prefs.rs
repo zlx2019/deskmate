@@ -70,7 +70,12 @@ pub fn save_settings(
     state
         .receiver
         .set_pin(settings.pin.clone().filter(|p| !p.is_empty()));
+    // 语言变化即时生效: 通知文案发送时实时取, 托盘菜单需重建
+    let language_changed = lock(&state.settings).language != settings.language;
     *lock(&state.settings) = settings;
+    if language_changed {
+        crate::refresh_tray_menu(&app);
+    }
     Ok(())
 }
 

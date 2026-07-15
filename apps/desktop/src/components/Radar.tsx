@@ -5,6 +5,7 @@
 // 下线收缩消散(pop-out, 由 useExitingPeers 在数据移除后保留一拍播放)。
 
 import { memo, useEffect, useMemo, useState } from "react";
+import { useI18n } from "../i18n";
 import { avatarHashOf, type PeerDto, type SelfInfoDto } from "../types";
 
 /** 从指纹取稳定色相(节点头像配色) */
@@ -220,6 +221,7 @@ export const Radar = memo(function Radar({
   dragging,
   onPeerClick,
 }: RadarProps) {
+  const { t } = useI18n();
   const rendered = useExitingPeers(peers);
 
   /** 取头像图片 URL(非图片头像或未就绪时为 undefined) */
@@ -276,9 +278,9 @@ export const Radar = memo(function Radar({
           </div>
         </div>
         <div className="mx-auto mt-2 w-fit max-w-44 truncate rounded-full border border-line bg-panel px-2.5 py-0.5 text-xs text-fog">
-          {self ? `${self.name} · 我的设备` : "…"}
+          {self ? `${self.name} · ${t.radar.myDevice}` : "…"}
         </div>
-        <div className="mt-1 text-[11px] tracking-[0.18em] text-faint">THIS DEVICE</div>
+        <div className="mt-1 text-[11px] tracking-[0.18em] text-faint">{t.radar.thisDevice}</div>
       </div>
 
       {/* 附近设备气泡 */}
@@ -336,9 +338,9 @@ export const Radar = memo(function Radar({
       <div className="pointer-events-none absolute inset-x-0 bottom-4 flex flex-col items-center gap-2">
         <div className="flex items-center gap-2 rounded-full border border-line bg-panel px-4 py-1.5 text-[13px] text-mist">
           <span className="anim-breathe inline-block size-2 rounded-full bg-sonar" />
-          <span className="scan-dots">正在搜寻附近的设备</span>
+          <span className="scan-dots">{t.radar.scanning}</span>
         </div>
-        <div className="text-xs text-faint">拖拽文件到设备头像上即可发送</div>
+        <div className="text-xs text-faint">{t.radar.dragHint}</div>
       </div>
     </div>
   );

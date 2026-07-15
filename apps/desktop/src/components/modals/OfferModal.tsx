@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../../api";
+import { useI18n } from "../../i18n";
 import {
   humanBytes,
   type ConflictPolicy,
@@ -26,6 +27,7 @@ export function OfferModal({
     opts?: { saveDir?: string; overwrite?: boolean },
   ) => void;
 }) {
+  const { t } = useI18n();
   // saveDir 为 null 表示用默认下载目录
   const [saveDir, setSaveDir] = useState<string | null>(null);
   const [defaultDir, setDefaultDir] = useState("");
@@ -60,12 +62,12 @@ export function OfferModal({
   const overwrite = policy === "overwrite" || (policy === "ask" && askChoice === "overwrite");
 
   const pickDir = async () => {
-    const dir = await open({ directory: true, title: "选择保存位置" });
+    const dir = await open({ directory: true, title: t.offer.pickDirTitle });
     if (typeof dir === "string") setSaveDir(dir);
   };
 
   return (
-    <ModalShell title="incoming transfer">
+    <ModalShell title={t.offer.title}>
       <div className="px-5 py-4">
         <div className="flex items-center gap-3">
           <Avatar
@@ -77,10 +79,10 @@ export function OfferModal({
           />
           <div className="min-w-0">
             <div className="truncate text-sm text-fog">
-              <span className="font-medium">{offer.peerName}</span> 想向你发送文件
+              <span className="font-medium">{offer.peerName}</span> {t.offer.wantsToSend}
             </div>
             <div className="gauge-label mt-0.5">
-              {offer.files.length} files · {humanBytes(offer.totalSize)}
+              {t.offer.filesSummary(offer.files.length, humanBytes(offer.totalSize))}
             </div>
           </div>
         </div>
@@ -101,7 +103,7 @@ export function OfferModal({
 
         {/* 保存位置 + 磁盘可用空间 */}
         <div className="mt-3 flex items-center gap-2">
-          <span className="gauge-label shrink-0">save to</span>
+          <span className="gauge-label shrink-0">{t.offer.saveTo}</span>
           <span className="min-w-0 flex-1 truncate font-gauge text-xs text-fog/90">
             {saveDir ?? defaultDir}
           </span>
@@ -109,14 +111,14 @@ export function OfferModal({
             onClick={pickDir}
             className="shrink-0 cursor-pointer text-xs text-sonar transition-colors hover:text-fog"
           >
-            更改…
+            {t.offer.change}
           </button>
         </div>
         {precheck?.freeBytes != null && (
           <div className={`mt-1 text-xs ${notEnough ? "text-alert" : "text-mist"}`}>
             {notEnough
-              ? `磁盘空间不足: 可用 ${humanBytes(precheck.freeBytes)}, 需要 ${humanBytes(offer.totalSize)}, 请更换保存位置`
-              : `可用空间 ${humanBytes(precheck.freeBytes)}`}
+              ? t.offer.notEnough(humanBytes(precheck.freeBytes), humanBytes(offer.totalSize))
+              : t.offer.freeSpace(humanBytes(precheck.freeBytes))}
           </div>
         )}
 
@@ -124,14 +126,12 @@ export function OfferModal({
         {conflicts.length > 0 &&
           (policy === "ask" ? (
             <div className="mt-2 rounded-md border border-ember/40 bg-ember/5 px-3 py-2">
-              <div className="text-xs text-ember">
-                {conflicts.length} 个文件与目标目录同名, 如何处理?
-              </div>
+              <div className="text-xs text-ember">{t.offer.conflictAsk(conflicts.length)}</div>
               <div className="mt-1.5 flex gap-4">
                 {(
                   [
-                    ["rename", "自动重命名"],
-                    ["overwrite", "覆盖旧文件"],
+                    ["rename", t.offer.conflictRename],
+                    ["overwrite", t.offer.conflictOverwrite],
                   ] as const
                 ).map(([value, label]) => (
                   <label
@@ -152,13 +152,13 @@ export function OfferModal({
             </div>
           ) : (
             <div className={`mt-1 text-xs ${overwrite ? "text-ember" : "text-mist"}`}>
-              {conflicts.length} 个同名文件将{overwrite ? "被覆盖" : "自动重命名"}
+              {t.offer.conflictNotice(conflicts.length, overwrite)}
             </div>
           ))}
 
         <div className="mt-4 flex items-center justify-end gap-2">
           <Button variant="danger" onClick={() => onRespond(offer, false)}>
-            拒绝
+            {t.offer.reject}
           </Button>
           <Button
             variant="primary"
@@ -167,7 +167,7 @@ export function OfferModal({
               onRespond(offer, true, { saveDir: saveDir ?? undefined, overwrite })
             }
           >
-            接收
+            {t.offer.accept}
           </Button>
         </div>
       </div>

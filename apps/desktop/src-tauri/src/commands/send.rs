@@ -286,7 +286,11 @@ fn settle_send_result(
         Err(e) => {
             match e {
                 TransferError::Rejected { reason } => {
-                    crate::bridge::notify_if_unfocused(app, "deskmate", "对方拒绝了本次传输");
+                    crate::bridge::notify_if_unfocused(
+                        app,
+                        "deskmate",
+                        crate::locale::current(app).transfer_rejected,
+                    );
                     emit_transfer_event(
                         app,
                         TransferEventDto::Rejected {

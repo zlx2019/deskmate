@@ -7,6 +7,7 @@ import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../api";
 import { readClipboardImagePng, screenshotName } from "../clipboard";
 import { EVENTS } from "../events";
+import { getLocale, useI18n } from "../i18n";
 import { type PeerDto } from "../types";
 
 /** 聊天输入行: 设备下拉 + 文本框(Enter 发送 / Shift+Enter 换行)+ PIN 补填 */
@@ -27,6 +28,7 @@ export function MessageComposer({
   /** 发送剪贴板截图(走文件传输链, 由快捷键触发) */
   onSendImage: (peer: PeerDto, fileName: string, bytes: Uint8Array) => Promise<void>;
 }) {
+  const { t } = useI18n();
   // 文本必须逐字节原样发送, 不做任何 trim
   const [text, setText] = useState("");
   const [targetFp, setTargetFp] = useState("");
@@ -48,7 +50,7 @@ export function MessageComposer({
       const { pinRequired } = await api.sendText(target.fingerprint, content, pin);
       if (pinRequired) {
         setPinInput((prev) => prev ?? "");
-        setTip("对方要求配对 PIN");
+        setTip(getLocale().composer.pinRequired);
         return false;
       }
       if (pinInput?.trim()) onPinLearned(target.fingerprint, pinInput.trim());
@@ -79,7 +81,8 @@ export function MessageComposer({
   // 截图发送防重入(快捷键连按/粘贴连击); ref 即时生效, 不等重渲染
   const imageBusyRef = useRef(false);
 
-  /** 发送一张截图(快捷键与粘贴共用): 防重入 + 结果反馈 */
+  /** 发送一张截图(快捷键与粘贴共用): 防重入 + 结果反馈
+   * (快捷键路径的闭包挂载后不更新, 文案经 getLocale 取当前语言) */
   const sendImage = async (
     peer: PeerDto,
     fileName: string,
@@ -88,17 +91,18 @@ export function MessageComposer({
   ) => {
     if (imageBusyRef.current) return;
     imageBusyRef.current = true;
+    const msg = getLocale().composer;
     try {
       await onSendImageRef.current(peer, fileName, bytes);
       if (notifyResult) {
-        api.notify("截图发送中", `发往 ${peer.name}`).catch(console.error);
+        api.notify(msg.notifyScreenshotSending, msg.notifyTo(peer.name)).catch(console.error);
       } else {
-        setTip("截图发送中, 见传输任务");
+        setTip(msg.screenshotSendingTip);
         setTimeout(() => setTip(null), 2000);
       }
     } catch (e) {
       if (notifyResult) {
-        api.notify("截图发送失败", String(e)).catch(console.error);
+        api.notify(msg.notifyScreenshotFailed, String(e)).catch(console.error);
       } else {
         setTip(String(e));
       }
@@ -113,9 +117,11 @@ export function MessageComposer({
     let alive = true;
     let unlisten: UnlistenFn | undefined;
     listen(EVENTS.HOTKEY_SEND_CLIPBOARD, async () => {
+      // 一次性挂载的监听闭包: 文案经 getLocale 取当前语言, 不随组件重渲
+      const msg = getLocale().composer;
       const peer = targetRef.current;
       if (!peer) {
-        api.notify("deskmate", "没有在线设备, 剪贴板未发送").catch(console.error);
+        api.notify("deskmate", msg.notifyNoPeer).catch(console.error);
         return;
       }
       // 剪贴板是截图: 编码 PNG 走文件传输链(对端按普通文件接收)
@@ -126,13 +132,13 @@ export function MessageComposer({
       }
       const clip = await readText().catch(() => null);
       if (!clip) {
-        api.notify("deskmate", "剪贴板没有文本或截图, 未发送").catch(console.error);
+        api.notify("deskmate", msg.notifyNoClip).catch(console.error);
         return;
       }
       if (await deliverRef.current(clip)) {
-        api.notify("剪贴板已送达", `发往 ${peer.name}`).catch(console.error);
+        api.notify(msg.notifyClipSent, msg.notifyTo(peer.name)).catch(console.error);
       } else {
-        api.notify("剪贴板发送失败", "打开 deskmate 查看详情").catch(console.error);
+        api.notify(msg.notifyClipFailed, msg.notifyOpenApp).catch(console.error);
       }
     }).then((u) => {
       // StrictMode 下 effect 双跑, 迟到的订阅立即退订
@@ -148,7 +154,7 @@ export function MessageComposer({
   if (peers.length === 0) {
     return (
       <div className="border-t border-line px-4 py-3 text-center text-xs text-mist/70">
-        暂无在线设备, 无法发送消息
+        {t.composer.noPeers}
       </div>
     );
   }
@@ -156,7 +162,7 @@ export function MessageComposer({
   return (
     <div className="border-t border-line px-3 py-2.5">
       <div className="flex items-center gap-2">
-        <span className="shrink-0 text-[11px] text-mist">发给</span>
+        <span className="shrink-0 text-[11px] text-mist">{t.composer.to}</span>
         <select
           value={target?.fingerprint ?? ""}
           onChange={(e) => setTargetFp(e.target.value)}
@@ -176,7 +182,7 @@ export function MessageComposer({
           autoFocus
           value={pinInput}
           onChange={(e) => setPinInput(e.target.value)}
-          placeholder="输入对方的配对 PIN 后重新发送"
+          placeholder={t.composer.pinPlaceholder}
           className="mt-2 w-full rounded-md border border-ember/50 bg-abyss/60 px-3 py-1.5 font-gauge text-sm text-fog outline-none focus:border-ember"
         />
       )}
@@ -205,13 +211,13 @@ export function MessageComposer({
             })();
           }}
           rows={2}
-          placeholder="输入消息, Enter 发送(逐字原样送达)"
+          placeholder={t.composer.placeholder}
           className="min-w-0 flex-1 resize-none rounded-md border border-line-2 bg-abyss/60 px-2.5 py-1.5 font-gauge text-xs text-fog outline-none transition-colors placeholder:text-mist/60 focus:border-sonar/60"
         />
         <button
           onClick={() => void send()}
           disabled={text.length === 0 || sending}
-          title="发送"
+          title={t.composer.send}
           className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-sonar/50 text-sonar transition-colors hover:bg-sonar/10 disabled:cursor-default disabled:border-line-2 disabled:text-mist/50"
         >
           {sending ? (

@@ -84,6 +84,8 @@ export interface Settings {
   autoCopyText: boolean;
   /** 发送剪贴板的全局快捷键(null 关闭; Tauri 语法, 如 "CmdOrCtrl+Shift+D") */
   sendClipboardHotkey: string | null;
+  /** 界面语言: "zh" / "en"; 空表示未初始化(首启按系统语言检测后写入) */
+  language: string;
 }
 
 /** 内置头像库(设置页挑选, 随发现报文广播) */
