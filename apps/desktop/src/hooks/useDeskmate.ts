@@ -312,6 +312,27 @@ export function useDeskmate() {
     });
   };
 
+  /** 发送剪贴板截图到节点(PNG 走文件传输链, 建立与文件发送一致的进度条目;
+   * useCallback 保引用稳定, 供 memo 的 TransferPanel 使用) */
+  const sendClipboardImage = useCallback(
+    async (peer: PeerDto, fileName: string, bytes: number[]) => {
+      const transferId = await api.sendClipboardImage(
+        peer.fingerprint,
+        fileName,
+        bytes,
+        getPin(peer.fingerprint),
+      );
+      dispatch({
+        type: "begin",
+        transferId,
+        direction: "send",
+        peerName: peer.name,
+        peerFingerprint: peer.fingerprint,
+      });
+    },
+    [getPin],
+  );
+
   /** 应答接收请求; overwrite 为本次的同名冲突决策 */
   const respondOffer = async (
     offer: OfferDto,
@@ -374,6 +395,7 @@ export function useDeskmate() {
     transfers,
     avatarSrcs,
     sendFiles,
+    sendClipboardImage,
     respondOffer,
     getPin,
     rememberPin,

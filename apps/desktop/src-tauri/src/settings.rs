@@ -60,6 +60,8 @@ pub struct Settings {
     pub pin: Option<String>,
     /// 收到文本时自动复制到系统剪贴板(即时生效)
     pub auto_copy_text: bool,
+    /// 发送剪贴板的全局快捷键(None 关闭; Tauri 语法, 如 "CmdOrCtrl+Shift+D")
+    pub send_clipboard_hotkey: Option<String>,
 }
 
 impl Default for Settings {
@@ -75,6 +77,7 @@ impl Default for Settings {
             trusted: Vec::new(),
             pin: None,
             auto_copy_text: false,
+            send_clipboard_hotkey: Some("CmdOrCtrl+Shift+D".to_string()),
         }
     }
 }

@@ -44,6 +44,8 @@ pub mod events {
     pub const TRANSFER_AUTOSTART: &str = "transfer-autostart";
     /// 对端头像缓存就绪(载荷 AvatarReadyDto)
     pub const AVATAR_READY: &str = "avatar-ready";
+    /// 全局快捷键触发: 前端读剪贴板发给消息框选中设备(无载荷)
+    pub const HOTKEY_SEND_CLIPBOARD: &str = "hotkey-send-clipboard";
 }
 
 /// 发射传输事件到前端(发送失败只记录, 不影响引擎)

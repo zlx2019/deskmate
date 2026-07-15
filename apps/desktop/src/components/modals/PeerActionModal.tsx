@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../../api";
+import { readClipboardImagePng } from "../../clipboard";
 import { type PeerDto } from "../../types";
 import { Avatar } from "../Radar";
 import { Button, ModalShell, ToggleRow } from "./ModalShell";
@@ -15,6 +16,7 @@ export function PeerActionModal({
   getPin,
   onPinLearned,
   onSendFiles,
+  onSendImage,
   onClose,
 }: {
   peer: PeerDto;
@@ -24,6 +26,8 @@ export function PeerActionModal({
   /** PIN 验证通过后回写会话缓存 */
   onPinLearned: (fingerprint: string, pin: string) => void;
   onSendFiles: (peer: PeerDto, paths: string[]) => void;
+  /** 发送剪贴板截图(走文件传输链) */
+  onSendImage: (peer: PeerDto, fileName: string, bytes: number[]) => Promise<void>;
   onClose: () => void;
 }) {
   // 文本内容必须逐字节原样发送, 不做任何 trim
@@ -101,11 +105,22 @@ export function PeerActionModal({
     if (await deliver(text, "已送达")) setText("");
   };
 
-  /** 剪贴板一键发送: 读系统剪贴板文本直接送达(点击即明确意图, 不二次确认) */
+  /** 剪贴板一键发送: 截图优先走文件传输链, 否则按文本直接送达 */
   const sendClipboard = async () => {
+    const image = await readClipboardImagePng();
+    if (image) {
+      try {
+        await onSendImage(peer, image.name, image.bytes);
+        // 截图按文件任务发送, 进度在右栏; 关弹窗让用户看到任务条目
+        onClose();
+      } catch (e) {
+        setSentTip(String(e));
+      }
+      return;
+    }
     const clip = await readText().catch(() => null);
     if (!clip) {
-      setSentTip("剪贴板没有文本");
+      setSentTip("剪贴板没有文本或截图");
       return;
     }
     await deliver(clip, "剪贴板已送达");
