@@ -234,6 +234,7 @@ export default function App() {
             getPin={dm.getPin}
             onPinLearned={dm.rememberPin}
             onTextSent={dm.addSentText}
+            onSendImage={dm.sendClipboardImage}
             onPinRetry={setPinRetry}
           />
         </aside>
@@ -256,6 +257,7 @@ export default function App() {
           onSendFiles={(peer, paths) => {
             dm.sendFiles(peer, paths).catch(console.error);
           }}
+          onSendImage={dm.sendClipboardImage}
           onClose={() => setActivePeer(null)}
         />
       )}

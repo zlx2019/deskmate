@@ -46,4 +46,9 @@ export const api = {
   /** 读取头像字节: hash 缺省取本机自定义头像, 传入则查对端缓存(未命中 null) */
   getAvatarImage: (hash?: string) =>
     invoke<number[] | null>("get_avatar_image", { hash: hash ?? null }),
+  /** 系统通知(未聚焦才发; 窗口可能隐藏的场景反馈用, 如快捷键发送结果) */
+  notify: (title: string, body: string) => invoke<void>("notify", { title, body }),
+  /** 发送剪贴板截图(PNG 字节落临时文件后走文件传输链), 返回任务 ID */
+  sendClipboardImage: (fingerprint: string, fileName: string, data: number[], pin?: string) =>
+    invoke<string>("send_clipboard_image", { fingerprint, fileName, data, pin: pin ?? null }),
 };

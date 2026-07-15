@@ -12,4 +12,6 @@ export const EVENTS = {
   TRANSFER_AUTOSTART: "transfer-autostart",
   /** 对端头像缓存就绪(前端重新读取缓存) */
   AVATAR_READY: "avatar-ready",
+  /** 全局快捷键触发: 读剪贴板发给消息框选中设备(无载荷) */
+  HOTKEY_SEND_CLIPBOARD: "hotkey-send-clipboard",
 } as const;

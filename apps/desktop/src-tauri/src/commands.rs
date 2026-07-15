@@ -86,6 +86,47 @@ pub async fn send_files_to(
     Ok(transfer_id)
 }
 
+/// 发送剪贴板截图: 前端编码好的 PNG 字节落成临时文件后走文件传输链
+///
+/// 对端收到的就是普通 PNG 文件(确认/白名单/进度/历史/PIN 重试全复用,
+/// 协议零改动)。临时文件不主动清理, 交由系统温存目录策略回收 ——
+/// 失败重试(interrupted_sends 登记的就是该路径)还需要它。
+#[tauri::command]
+pub async fn send_clipboard_image(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    fingerprint: String,
+    file_name: String,
+    data: Vec<u8>,
+    pin: Option<String>,
+) -> Result<String, String> {
+    // 文件名由前端生成(screenshot-时间戳.png), 白名单校验防路径注入
+    let legal = !file_name.is_empty()
+        && !file_name.contains("..")
+        && file_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if !legal {
+        return Err("非法的截图文件名".to_string());
+    }
+    if data.is_empty() {
+        return Err("截图数据为空".to_string());
+    }
+    let path = std::env::temp_dir().join(&file_name);
+    std::fs::write(&path, &data).map_err(|e| format!("写入临时截图失败: {e}"))?;
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    spawn_transfer_task(
+        &app,
+        &state,
+        transfer_id.clone(),
+        fingerprint,
+        vec![path],
+        SendMode::Fresh { pin },
+    )?;
+    Ok(transfer_id)
+}
+
 /// 用给定 PIN 重试被拒(pin_required)的发送任务, 复用原 transfer_id 与进度条目
 #[tauri::command]
 pub async fn retry_send_transfer(
@@ -464,6 +505,44 @@ pub fn append_history(state: State<'_, AppState>, entry: crate::history::History
     state.history.append(entry);
 }
 
+/// 系统通知(未聚焦才发; 供前端在窗口可能隐藏的场景反馈, 如快捷键发送结果)
+#[tauri::command]
+pub fn notify(app: tauri::AppHandle, title: String, body: String) {
+    crate::bridge::notify_if_unfocused(&app, &title, &body);
+}
+
+/// 应用"发送剪贴板"全局快捷键: 注销旧值后注册新值(None/空 = 仅注销)
+///
+/// 返回错误字符串供设置保存时回显(格式非法或与其他应用冲突)。
+pub(crate) fn apply_clipboard_hotkey(
+    app: &tauri::AppHandle,
+    old: Option<&str>,
+    new: Option<&str>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+    let gs = app.global_shortcut();
+    // 旧值解析失败说明从未注册成功, 忽略即可
+    if let Some(old) = old.filter(|s| !s.is_empty())
+        && let Ok(sc) = old.parse::<Shortcut>()
+    {
+        let _ = gs.unregister(sc);
+    }
+    let Some(new) = new.filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let sc: Shortcut = new.parse().map_err(|e| format!("快捷键格式无效: {e}"))?;
+    gs.on_shortcut(sc, |app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            // 目标设备与 PIN 会话缓存都在前端, 通知前端读剪贴板并发送
+            if let Err(e) = app.emit(crate::bridge::events::HOTKEY_SEND_CLIPBOARD, ()) {
+                tracing::debug!("快捷键事件发射失败: {e}");
+            }
+        }
+    })
+    .map_err(|e| format!("快捷键注册失败(可能与其他应用冲突): {e}"))
+}
+
 /// 系统窗口材质(vibrancy/mica)是否生效; 前端据此启用半透明背景
 #[tauri::command]
 pub fn window_effects_active() -> bool {
@@ -484,6 +563,17 @@ pub fn save_settings(
     settings: Settings,
 ) -> Result<(), String> {
     std::fs::create_dir_all(&settings.download_dir).map_err(|e| format!("下载目录不可用: {e}"))?;
+    // 全局快捷键先于落盘应用: 注册失败(格式/冲突)时整个保存失败, 避免"文件已存新值但未生效"
+    {
+        let old = lock(&state.settings).send_clipboard_hotkey.clone();
+        if old != settings.send_clipboard_hotkey {
+            apply_clipboard_hotkey(
+                &app,
+                old.as_deref(),
+                settings.send_clipboard_hotkey.as_deref(),
+            )?;
+        }
+    }
     settings
         .save(&state.data_dir)
         .map_err(|e| format!("保存设置失败: {e}"))?;

@@ -46,4 +46,5 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 # 系统剪贴板读写(剪贴板一键发送, 2026-07-14 批准)
 tauri-plugin-clipboard-manager = "2"
-
+# 全局快捷键(快捷键发送剪贴板, 2026-07-15 批准)
+tauri-plugin-global-shortcut = "2"
