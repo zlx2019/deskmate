@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../../api";
 import { readClipboardImagePng } from "../../clipboard";
+import { useI18n } from "../../i18n";
 import { type PeerDto } from "../../types";
 import { Avatar } from "../Radar";
 import { Button, ModalShell, ToggleRow } from "./ModalShell";
@@ -30,6 +31,7 @@ export function PeerActionModal({
   onSendImage: (peer: PeerDto, fileName: string, bytes: Uint8Array) => Promise<void>;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   // 文本内容必须逐字节原样发送, 不做任何 trim
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -64,8 +66,8 @@ export function PeerActionModal({
   const pickAndSend = async (directory: boolean) => {
     const picked = await open(
       directory
-        ? { directory: true, title: "选择要发送的文件夹" }
-        : { multiple: true, title: "选择要发送的文件" },
+        ? { directory: true, title: t.peer.pickFolderTitle }
+        : { multiple: true, title: t.peer.pickFilesTitle },
     );
     if (!picked) return;
     const paths = Array.isArray(picked) ? picked : [picked];
@@ -85,7 +87,7 @@ export function PeerActionModal({
       if (pinRequired) {
         // 对方要求配对 PIN: 展开输入行等待补填
         setPinInput((prev) => prev ?? "");
-        setSentTip("对方要求配对 PIN");
+        setSentTip(t.peer.pinRequired);
         return false;
       }
       if (pinInput?.trim()) onPinLearned(peer.fingerprint, pinInput.trim());
@@ -102,7 +104,7 @@ export function PeerActionModal({
   };
 
   const sendText = async () => {
-    if (await deliver(text, "已送达")) setText("");
+    if (await deliver(text, t.peer.delivered)) setText("");
   };
 
   /** 剪贴板一键发送: 截图优先走文件传输链, 否则按文本直接送达 */
@@ -125,14 +127,14 @@ export function PeerActionModal({
     }
     const clip = await readText().catch(() => null);
     if (!clip) {
-      setSentTip("剪贴板没有文本或截图");
+      setSentTip(t.peer.noClip);
       return;
     }
-    await deliver(clip, "剪贴板已送达");
+    await deliver(clip, t.peer.clipDelivered);
   };
 
   return (
-    <ModalShell title="send to peer" onClose={onClose}>
+    <ModalShell title={t.peer.title} onClose={onClose}>
       <div className="px-5 py-4">
         <div className="flex items-center gap-3">
           <Avatar
@@ -153,26 +155,26 @@ export function PeerActionModal({
 
         <div className="mt-4 grid grid-cols-2 gap-2">
           <Button variant="primary" onClick={() => pickAndSend(false)}>
-            发送文件…
+            {t.peer.sendFiles}
           </Button>
-          <Button onClick={() => pickAndSend(true)}>发送文件夹…</Button>
+          <Button onClick={() => pickAndSend(true)}>{t.peer.sendFolder}</Button>
         </div>
 
         {trusted !== null && (
           <ToggleRow
-            label="信任此设备"
-            hint="它发来的文件将免确认自动接收到默认下载目录"
+            label={t.peer.trustLabel}
+            hint={t.peer.trustHint}
             checked={trusted}
             onChange={toggleTrust}
           />
         )}
 
-        <div className="gauge-label mt-5 mb-2">send text</div>
+        <div className="gauge-label mt-5 mb-2">{t.peer.sendTextSection}</div>
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={4}
-          placeholder="输入要发送的文本, 将逐字原样送达(保留空格与换行)"
+          placeholder={t.peer.textPlaceholder}
           className="w-full resize-none rounded-md border border-line-2 bg-abyss/60 px-3 py-2 font-gauge text-xs text-fog outline-none transition-colors placeholder:text-mist/60 focus:border-sonar/60"
         />
         {/* 对方启用配对 PIN 时的补填行 */}
@@ -181,17 +183,17 @@ export function PeerActionModal({
             autoFocus
             value={pinInput}
             onChange={(e) => setPinInput(e.target.value)}
-            placeholder="输入对方的配对 PIN 后重新发送"
+            placeholder={t.peer.pinPlaceholder}
             className="mt-2 w-full rounded-md border border-ember/50 bg-abyss/60 px-3 py-1.5 font-gauge text-sm text-fog outline-none focus:border-ember"
           />
         )}
         <div className="mt-2 flex items-center justify-end gap-3">
           {sentTip && <span className="text-xs text-sonar">{sentTip}</span>}
           <Button disabled={sending} onClick={sendClipboard}>
-            发送剪贴板
+            {t.peer.sendClipboard}
           </Button>
           <Button variant="primary" disabled={text.length === 0 || sending} onClick={sendText}>
-            {sending ? "发送中…" : "发送文本"}
+            {sending ? t.peer.sending : t.peer.sendText}
           </Button>
         </div>
       </div>

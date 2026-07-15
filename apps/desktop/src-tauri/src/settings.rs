@@ -62,6 +62,8 @@ pub struct Settings {
     pub auto_copy_text: bool,
     /// 发送剪贴板的全局快捷键(None 关闭; Tauri 语法, 如 "CmdOrCtrl+Shift+D")
     pub send_clipboard_hotkey: Option<String>,
+    /// 界面语言: "zh" / "en"; 空表示未初始化(首启由前端按系统语言检测后写入)
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -78,6 +80,7 @@ impl Default for Settings {
             pin: None,
             auto_copy_text: false,
             send_clipboard_hotkey: Some("CmdOrCtrl+Shift+D".to_string()),
+            language: String::new(),
         }
     }
 }

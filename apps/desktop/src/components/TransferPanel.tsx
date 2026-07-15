@@ -3,22 +3,20 @@
 import { memo, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
+import { useI18n } from "../i18n";
 import { humanBytes, type PeerDto, type TextMsg, type TransferItem } from "../types";
 import { CardClose, ClearButton } from "./ClearButton";
 import { HistoryList } from "./HistoryList";
 import { MessageComposer } from "./MessageComposer";
 
-/** 状态视觉映射 */
-const STATUS_META: Record<
-  TransferItem["status"],
-  { label: string; color: string }
-> = {
-  active: { label: "传输中", color: "text-ember" },
-  paused: { label: "已暂停", color: "text-mist" },
-  completed: { label: "已完成", color: "text-sonar" },
-  cancelled: { label: "已取消", color: "text-mist" },
-  interrupted: { label: "已中断", color: "text-alert" },
-  rejected: { label: "被拒绝", color: "text-alert" },
+/** 状态颜色映射(文案随语言在渲染时取 t.transfer.status) */
+export const STATUS_COLOR: Record<TransferItem["status"], string> = {
+  active: "text-ember",
+  paused: "text-mist",
+  completed: "text-sonar",
+  cancelled: "text-mist",
+  interrupted: "text-alert",
+  rejected: "text-alert",
 };
 
 /** 剩余时间估算: 75 → "1m 15s" */
@@ -41,7 +39,7 @@ function TransferCard({
   onResume: (transferId: string) => void;
   onPinRetry: (item: TransferItem) => void;
 }) {
-  const meta = STATUS_META[item.status];
+  const { t } = useI18n();
   const pct = item.size > 0 ? Math.min(100, (item.done / item.size) * 100) : 0;
   const running = item.status === "active" || item.status === "paused";
   // 当前文件的剩余时间(速度尚未采样时不显示)
@@ -57,10 +55,12 @@ function TransferCard({
           {item.direction === "send" ? "▲" : "▼"}
         </span>
         <span className="min-w-0 flex-1 truncate text-sm">
-          {item.direction === "send" ? "发往 " : "来自 "}
+          {item.direction === "send" ? t.transfer.sendTo : t.transfer.recvFrom}
           <span className="text-fog">{item.peerName}</span>
         </span>
-        <span className={`gauge-label ${meta.color}`}>{meta.label}</span>
+        <span className={`gauge-label ${STATUS_COLOR[item.status]}`}>
+          {t.transfer.status[item.status]}
+        </span>
       </div>
 
       <div className="mt-1.5 truncate font-gauge text-xs text-mist">{item.currentFile}</div>
@@ -78,16 +78,20 @@ function TransferCard({
           <div className="mt-1.5 flex items-center gap-3">
             <span className="font-gauge text-[11px] text-mist">
               {pct.toFixed(0)}% · {humanBytes(item.speed)}/s
-              {eta && ` · 剩余 ${eta}`}
+              {eta && ` · ${t.transfer.eta(eta)}`}
             </span>
             <span className="flex-1" />
             {item.status === "active" ? (
-              <PanelButton onClick={() => onPause(item.transferId)}>暂停</PanelButton>
+              <PanelButton onClick={() => onPause(item.transferId)}>
+                {t.transfer.pause}
+              </PanelButton>
             ) : (
-              <PanelButton onClick={() => onResume(item.transferId)}>继续</PanelButton>
+              <PanelButton onClick={() => onResume(item.transferId)}>
+                {t.transfer.resume}
+              </PanelButton>
             )}
             <PanelButton danger onClick={() => api.cancel(item.transferId)}>
-              取消
+              {t.transfer.cancel}
             </PanelButton>
           </div>
         </>
@@ -95,11 +99,13 @@ function TransferCard({
 
       {item.status === "completed" && (
         <div className="mt-1.5 flex items-center gap-3">
-          <span className="font-gauge text-[11px] text-mist">{item.filesDone} 个文件</span>
+          <span className="font-gauge text-[11px] text-mist">
+            {t.transfer.files(item.filesDone)}
+          </span>
           <span className="flex-1" />
           {item.lastPath && (
             <PanelButton onClick={() => revealItemInDir(item.lastPath ?? "")}>
-              显示
+              {t.transfer.reveal}
             </PanelButton>
           )}
         </div>
@@ -115,11 +121,13 @@ function TransferCard({
           </span>
           {/* 发送侧中断可续传(补发缺失段); 接收侧被动等待对方续传 */}
           {item.status === "interrupted" && item.direction === "send" && (
-            <PanelButton onClick={() => api.resumeSend(item.transferId)}>续传</PanelButton>
+            <PanelButton onClick={() => api.resumeSend(item.transferId)}>
+              {t.transfer.resumeSend}
+            </PanelButton>
           )}
           {/* 对方要求配对 PIN: 输入后原任务重试 */}
           {item.status === "rejected" && item.pinRequired && (
-            <PanelButton onClick={() => onPinRetry(item)}>输入 PIN</PanelButton>
+            <PanelButton onClick={() => onPinRetry(item)}>{t.transfer.enterPin}</PanelButton>
           )}
         </div>
       )}
@@ -153,6 +161,7 @@ function PanelButton({
 
 /** 文本消息卡片(按方向区分"来自/发往", 右上角悬浮删除) */
 function TextCard({ msg, onRemove }: { msg: TextMsg; onRemove: (id: string) => void }) {
+  const { t } = useI18n();
   const out = msg.direction === "out";
   return (
     <div className="group relative rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition-colors duration-300">
@@ -160,10 +169,12 @@ function TextCard({ msg, onRemove }: { msg: TextMsg; onRemove: (id: string) => v
       <div className="flex items-center gap-2">
         <span className={`font-gauge text-xs ${out ? "text-ember" : "text-sonar"}`}>✉</span>
         <span className="min-w-0 flex-1 truncate text-sm">
-          {out ? "发往 " : "来自 "}
+          {out ? t.transfer.sendTo : t.transfer.recvFrom}
           <span className="text-fog">{msg.peerName}</span>
         </span>
-        <PanelButton onClick={() => navigator.clipboard.writeText(msg.text)}>复制</PanelButton>
+        <PanelButton onClick={() => navigator.clipboard.writeText(msg.text)}>
+          {t.transfer.copy}
+        </PanelButton>
       </div>
       {/* 逐字节原样展示: pre-wrap 保留空白与换行 */}
       <div className="mt-1.5 max-h-28 select-text overflow-auto whitespace-pre-wrap break-all rounded border border-line/60 bg-abyss/60 px-2.5 py-1.5 font-gauge text-xs text-fog/90">
@@ -230,6 +241,7 @@ export const TransferPanel = memo(function TransferPanel({
   onClearTexts: () => void;
   onPinRetry: (item: TransferItem) => void;
 }) {
+  const { t } = useI18n();
   // 上半区分页: 传输任务 / 互传记录(切回记录页时重新拉取)
   const [tab, setTab] = useState<"tasks" | "history">("tasks");
   const ordered = [...transfers].sort((a, b) => b.startedAt - a.startedAt);
@@ -237,13 +249,13 @@ export const TransferPanel = memo(function TransferPanel({
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center border-b border-line px-2">
         <TabButton active={tab === "tasks"} onClick={() => setTab("tasks")}>
-          传输任务
+          {t.transfer.tabTasks}
           <span className="rounded-full bg-chip px-2 py-px text-[11px] font-medium text-sonar">
             {ordered.length}
           </span>
         </TabButton>
         <TabButton active={tab === "history"} onClick={() => setTab("history")}>
-          互传记录
+          {t.transfer.tabHistory}
         </TabButton>
       </div>
       <div className="flex min-h-0 flex-[3] flex-col gap-2.5 overflow-y-auto px-3 py-3">
@@ -251,7 +263,7 @@ export const TransferPanel = memo(function TransferPanel({
           <HistoryList />
         ) : ordered.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs text-mist/70">
-            拖拽文件到地图上的设备即可发送
+            {t.transfer.emptyTasks}
           </div>
         ) : (
           ordered.map((t) => (
@@ -266,19 +278,23 @@ export const TransferPanel = memo(function TransferPanel({
         )}
       </div>
       <div className="flex items-center gap-2 border-y border-line px-4 py-2.5">
-        <span className="text-xs font-medium tracking-[0.14em] text-mist">文字消息</span>
+        <span className="text-xs font-medium tracking-[0.14em] text-mist">
+          {t.transfer.textSection}
+        </span>
         <span className="rounded-full bg-chip px-2 py-px text-[11px] font-medium text-sonar">
           {texts.length}
         </span>
         {texts.length > 0 && (
           <span className="ml-auto">
-            <ClearButton title="清空文字消息" onConfirm={onClearTexts} />
+            <ClearButton title={t.transfer.clearTexts} onConfirm={onClearTexts} />
           </span>
         )}
       </div>
       <div className="flex min-h-0 flex-[2] flex-col gap-2.5 overflow-y-auto px-3 py-3">
         {texts.length === 0 ? (
-          <div className="px-4 py-6 text-center text-xs text-mist/70">暂无文本消息</div>
+          <div className="px-4 py-6 text-center text-xs text-mist/70">
+            {t.transfer.emptyTexts}
+          </div>
         ) : (
           texts.map((m) => <TextCard key={m.id} msg={m} onRemove={onRemoveText} />)
         )}

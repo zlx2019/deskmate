@@ -3,17 +3,19 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../../api";
+import { getLocale, useI18n, type Lang } from "../../i18n";
 import { AVATARS, avatarBlobUrl, type Settings } from "../../types";
 import { Button, ModalShell, ToggleRow } from "./ModalShell";
 
-/** 设置分类 tab */
-const TABS = [
-  ["general", "通用"],
-  ["user", "用户"],
-  ["security", "安全"],
-  ["hotkey", "快捷键"],
-] as const;
-type TabKey = (typeof TABS)[number][0];
+/** 设置分类 tab(标签文案渲染时按语言取 t.settings.tabs) */
+const TABS = ["general", "user", "security", "hotkey"] as const;
+type TabKey = (typeof TABS)[number];
+
+/** 界面语言选项 */
+const LANGS: [Lang, string][] = [
+  ["zh", "中文"],
+  ["en", "English"],
+];
 
 /** 压缩头像: 居中裁方 → 128×128 → JPEG 字节(WebView 自带解码, 无需 Rust 图片库) */
 async function compressAvatar(file: File): Promise<Uint8Array> {
@@ -23,7 +25,7 @@ async function compressAvatar(file: File): Promise<Uint8Array> {
   canvas.width = 128;
   canvas.height = 128;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas 不可用");
+  if (!ctx) throw new Error(getLocale().settings.canvasError);
   ctx.drawImage(
     bitmap,
     (bitmap.width - side) / 2,
@@ -37,7 +39,7 @@ async function compressAvatar(file: File): Promise<Uint8Array> {
   );
   bitmap.close();
   const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.85));
-  if (!blob) throw new Error("图片编码失败");
+  if (!blob) throw new Error(getLocale().settings.encodeError);
   return new Uint8Array(await blob.arrayBuffer());
 }
 
@@ -49,11 +51,12 @@ function HotkeyInput({
   value: string | null;
   onChange: (v: string | null) => void;
 }) {
+  const { t } = useI18n();
   const [recording, setRecording] = useState(false);
   return (
     <input
       readOnly
-      value={recording ? "请按下组合键…" : (value ?? "未设置")}
+      value={recording ? t.settings.hotkeyRecording : (value ?? t.settings.hotkeyUnset)}
       onFocus={() => setRecording(true)}
       onBlur={() => setRecording(false)}
       onKeyDown={(e) => {
@@ -94,6 +97,7 @@ export function SettingsModal({
   onSaved: () => void;
   onClose: () => void;
 }) {
+  const { t, setLang } = useI18n();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [tab, setTab] = useState<TabKey>("general");
   const [tip, setTip] = useState<string | null>(null);
@@ -111,7 +115,7 @@ export function SettingsModal({
   }, []);
 
   const pickDir = async () => {
-    const dir = await open({ directory: true, title: "选择默认下载目录" });
+    const dir = await open({ directory: true, title: t.settings.pickDirTitle });
     if (typeof dir === "string" && settings) {
       setSettings({ ...settings, downloadDir: dir });
     }
@@ -138,6 +142,10 @@ export function SettingsModal({
         // 空昵称视为跟随主机名
         displayName: settings.displayName?.trim() ? settings.displayName : null,
       });
+      // 语言切换保存后即时生效(界面文案 + Rust 侧托盘/通知)
+      if (settings.language === "zh" || settings.language === "en") {
+        setLang(settings.language);
+      }
       onSaved();
       onClose();
     } catch (e) {
@@ -146,10 +154,10 @@ export function SettingsModal({
   };
 
   return (
-    <ModalShell title="settings" onClose={onClose}>
+    <ModalShell title={t.settings.title} onClose={onClose}>
       {/* 分类 tab 行 */}
       <div className="flex items-center border-b border-line px-3">
-        {TABS.map(([key, label]) => (
+        {TABS.map((key) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -157,7 +165,7 @@ export function SettingsModal({
               tab === key ? "text-fog" : "text-mist hover:text-fog/80"
             }`}
           >
-            {label}
+            {t.settings.tabs[key]}
             {tab === key && (
               <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-sonar" />
             )}
@@ -170,23 +178,23 @@ export function SettingsModal({
           <>
             {tab === "general" && (
               <>
-                <div className="gauge-label mb-1">下载目录</div>
+                <div className="gauge-label mb-1">{t.settings.downloadDir}</div>
                 <div className="flex gap-2">
                   <input
                     readOnly
                     value={settings.downloadDir}
                     className="min-w-0 flex-1 rounded-md border border-line-2 bg-abyss/60 px-3 py-1.5 font-gauge text-xs text-fog/90 outline-none"
                   />
-                  <Button onClick={pickDir}>选择…</Button>
+                  <Button onClick={pickDir}>{t.settings.choose}</Button>
                 </div>
 
-                <div className="gauge-label mt-4 mb-1">同名文件处理</div>
+                <div className="gauge-label mt-4 mb-1">{t.settings.conflict}</div>
                 <div className="flex gap-1.5">
                   {(
                     [
-                      ["rename", "重命名"],
-                      ["overwrite", "覆盖"],
-                      ["ask", "询问"],
+                      ["rename", t.settings.conflictRename],
+                      ["overwrite", t.settings.conflictOverwrite],
+                      ["ask", t.settings.conflictAsk],
                     ] as const
                   ).map(([value, label]) => (
                     <button
@@ -203,7 +211,24 @@ export function SettingsModal({
                   ))}
                 </div>
 
-                <div className="gauge-label mt-4 mb-1">监听端口</div>
+                <div className="gauge-label mt-4 mb-1">{t.settings.language}</div>
+                <div className="flex gap-1.5">
+                  {LANGS.map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => setSettings({ ...settings, language: value })}
+                      className={`cursor-pointer rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                        settings.language === value
+                          ? "border-sonar/60 bg-sonar/15 text-sonar"
+                          : "border-line-2 text-fog/70 hover:border-mist hover:text-fog"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="gauge-label mt-4 mb-1">{t.settings.port}</div>
                 <input
                   type="number"
                   min={0}
@@ -216,12 +241,12 @@ export function SettingsModal({
                 />
 
                 <ToggleRow
-                  label="自动复制"
+                  label={t.settings.autoCopy}
                   checked={settings.autoCopyText}
                   onChange={(v) => setSettings({ ...settings, autoCopyText: v })}
                 />
                 <ToggleRow
-                  label="开机自启"
+                  label={t.settings.autostart}
                   checked={settings.autostart}
                   onChange={(v) => setSettings({ ...settings, autostart: v })}
                 />
@@ -230,31 +255,31 @@ export function SettingsModal({
 
             {tab === "user" && (
               <>
-                <div className="gauge-label mb-1">device fingerprint</div>
+                <div className="gauge-label mb-1">{t.settings.fingerprint}</div>
                 <button
                   className="w-full cursor-pointer select-text truncate rounded-md border border-line/70 bg-abyss/50 px-3 py-1.5 text-left font-gauge text-[11px] text-mist transition-colors hover:text-fog"
-                  title="点击复制"
+                  title={t.settings.copyHint}
                   onClick={() => navigator.clipboard.writeText(fingerprint)}
                 >
                   {fingerprint}
                 </button>
 
-                <div className="gauge-label mt-4 mb-1">昵称</div>
+                <div className="gauge-label mt-4 mb-1">{t.settings.nickname}</div>
                 <input
                   value={settings.displayName ?? ""}
                   onChange={(e) => setSettings({ ...settings, displayName: e.target.value })}
-                  placeholder="默认为主机名"
+                  placeholder={t.settings.nicknamePlaceholder}
                   className="w-full rounded-md border border-line-2 bg-abyss/60 px-3 py-1.5 text-sm text-fog outline-none focus:border-sonar/60"
                 />
 
-                <div className="gauge-label mt-4 mb-1">头像</div>
+                <div className="gauge-label mt-4 mb-1">{t.settings.avatar}</div>
                 <div className="flex flex-wrap gap-1.5">
                   {/* 首项 "Aa" 表示不用 emoji, 回退首字母样式 */}
                   {[null, ...AVATARS].map((a) => (
                     <button
                       key={a ?? "none"}
                       onClick={() => setSettings({ ...settings, avatar: a })}
-                      title={a ? undefined : "首字母样式"}
+                      title={a ? undefined : t.settings.initialStyle}
                       className={`flex size-9 cursor-pointer items-center justify-center rounded-md border text-base transition-colors ${
                         settings.avatar === a
                           ? "border-sonar/60 bg-sonar/15"
@@ -273,7 +298,7 @@ export function SettingsModal({
                         fileRef.current?.click();
                       }
                     }}
-                    title="上传图片头像"
+                    title={t.settings.uploadAvatar}
                     className={`flex size-9 cursor-pointer items-center justify-center overflow-hidden rounded-md border transition-colors ${
                       settings.avatar === "custom"
                         ? "border-sonar/60 bg-sonar/15"
@@ -302,43 +327,43 @@ export function SettingsModal({
 
             {tab === "security" && (
               <>
-                <div className="gauge-label mb-1">配对 PIN</div>
+                <div className="gauge-label mb-1">{t.settings.pin}</div>
                 <input
                   value={settings.pin ?? ""}
                   onChange={(e) =>
                     setSettings({ ...settings, pin: e.target.value || null })
                   }
-                  placeholder="不设置表示无需配对"
+                  placeholder={t.settings.pinPlaceholder}
                   className="w-full rounded-md border border-line-2 bg-abyss/60 px-3 py-1.5 font-gauge text-sm text-fog outline-none focus:border-sonar/60"
                 />
 
                 {settings.trusted.length > 0 && (
                   <>
-                    <div className="gauge-label mt-4 mb-1">受信设备(免确认自动接收)</div>
+                    <div className="gauge-label mt-4 mb-1">{t.settings.trustedDevices}</div>
                     <div className="rounded-md border border-line/70 bg-abyss/50">
-                      {settings.trusted.map((t) => (
+                      {settings.trusted.map((d) => (
                         <div
-                          key={t.fingerprint}
+                          key={d.fingerprint}
                           className="flex items-center gap-3 border-b border-line/40 px-3 py-1.5 last:border-b-0"
                         >
                           <span className="min-w-0 flex-1 truncate text-xs text-fog/90">
-                            {t.name}
+                            {d.name}
                           </span>
                           <span className="font-gauge text-[10px] text-mist">
-                            {t.fingerprint.slice(0, 8)}
+                            {d.fingerprint.slice(0, 8)}
                           </span>
                           <button
                             onClick={() =>
                               setSettings({
                                 ...settings,
                                 trusted: settings.trusted.filter(
-                                  (x) => x.fingerprint !== t.fingerprint,
+                                  (x) => x.fingerprint !== d.fingerprint,
                                 ),
                               })
                             }
                             className="cursor-pointer text-xs text-alert/80 transition-colors hover:text-alert"
                           >
-                            移除
+                            {t.settings.remove}
                           </button>
                         </div>
                       ))}
@@ -347,7 +372,7 @@ export function SettingsModal({
                 )}
 
                 <ToggleRow
-                  label="隐身模式"
+                  label={t.settings.stealth}
                   checked={settings.passive}
                   onChange={(v) => setSettings({ ...settings, passive: v })}
                 />
@@ -356,15 +381,12 @@ export function SettingsModal({
 
             {tab === "hotkey" && (
               <>
-                <div className="gauge-label mb-1">发送剪贴板</div>
+                <div className="gauge-label mb-1">{t.settings.hotkeyLabel}</div>
                 <HotkeyInput
                   value={settings.sendClipboardHotkey}
                   onChange={(v) => setSettings({ ...settings, sendClipboardHotkey: v })}
                 />
-                <div className="mt-2 text-[11px] text-mist">
-                  全局生效: 在任何应用按下, 即把剪贴板文本发给消息框选中的设备。
-                  点击输入框后按组合键设置, Backspace 清除。
-                </div>
+                <div className="mt-2 text-[11px] text-mist">{t.settings.hotkeyHint}</div>
               </>
             )}
 
@@ -373,14 +395,14 @@ export function SettingsModal({
                 把滚动上来的内容模糊掉, 否则文字会从按钮底下透出 */}
             <div className="sticky bottom-0 -mx-5 -mb-4 mt-5 flex items-center justify-end gap-3 border-t border-line bg-panel px-5 py-3 backdrop-blur-xl">
               {tip && <span className="max-w-52 truncate text-xs text-alert">{tip}</span>}
-              <Button onClick={onClose}>取消</Button>
+              <Button onClick={onClose}>{t.settings.cancel}</Button>
               <Button variant="primary" onClick={save}>
-                保存
+                {t.settings.save}
               </Button>
             </div>
           </>
         ) : (
-          <div className="py-6 text-center text-xs text-mist">加载中…</div>
+          <div className="py-6 text-center text-xs text-mist">{t.settings.loading}</div>
         )}
       </div>
     </ModalShell>

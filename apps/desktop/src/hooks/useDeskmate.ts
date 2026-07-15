@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { EVENTS } from "../events";
+import { getLocale } from "../i18n";
 import {
   avatarBlobUrl,
   avatarHashOf,
@@ -49,7 +50,7 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
         peerName,
         peerFingerprint,
         status: "active",
-        currentFile: "等待对方响应…",
+        currentFile: getLocale().transfer.waitingResponse,
         done: 0,
         size: 0,
         filesDone: 0,
@@ -78,7 +79,7 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
   const prev: TransferItem = state[ev.transferId] ?? {
     transferId: ev.transferId,
     direction: "recv",
-    peerName: "对方设备",
+    peerName: getLocale().transfer.unknownPeer,
     peerFingerprint: "",
     status: "active",
     currentFile: "",
@@ -134,7 +135,7 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
         ...prev,
         status: "rejected",
         speed: 0,
-        reason: ev.reason ?? "对方拒绝",
+        reason: ev.reason ?? getLocale().transfer.rejectedDefault,
         pinRequired: ev.pinRequired,
       };
       break;
@@ -279,7 +280,7 @@ export function useDeskmate() {
               .appendHistory({
                 transferId: ev.transferId,
                 direction: prev?.direction ?? "recv",
-                peerName: prev?.peerName ?? "对方设备",
+                peerName: prev?.peerName ?? getLocale().transfer.unknownPeer,
                 status: ev.kind,
                 filesDone: prev?.filesDone ?? 0,
                 bytes: prev?.done ?? 0,

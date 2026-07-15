@@ -3,16 +3,10 @@
 import { useEffect, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
+import { useI18n } from "../i18n";
 import { humanBytes, type HistoryEntry } from "../types";
 import { CardClose, ClearButton } from "./ClearButton";
-
-/** 状态文案与颜色(与传输卡片的语义一致) */
-const STATUS_META: Record<HistoryEntry["status"], { label: string; color: string }> = {
-  completed: { label: "已完成", color: "text-sonar" },
-  cancelled: { label: "已取消", color: "text-mist" },
-  interrupted: { label: "已中断", color: "text-alert" },
-  rejected: { label: "被拒绝", color: "text-alert" },
-};
+import { STATUS_COLOR } from "./TransferPanel";
 
 /** 时间短格式: 当天只显示时分, 跨天带月/日 */
 function shortTime(ts: number): string {
@@ -25,6 +19,7 @@ function shortTime(ts: number): string {
 
 /** 互传记录列表(窄栏紧凑两行布局, 支持单条删除与一键清空) */
 export function HistoryList() {
+  const { t } = useI18n();
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
 
   useEffect(() => {
@@ -44,16 +39,16 @@ export function HistoryList() {
   };
 
   if (entries === null) {
-    return <div className="px-4 py-8 text-center text-xs text-mist/70">加载中…</div>;
+    return <div className="px-4 py-8 text-center text-xs text-mist/70">{t.history.loading}</div>;
   }
   if (entries.length === 0) {
-    return <div className="px-4 py-8 text-center text-xs text-mist/70">暂无互传记录</div>;
+    return <div className="px-4 py-8 text-center text-xs text-mist/70">{t.history.empty}</div>;
   }
   return (
     <>
       <div className="flex items-center justify-between px-1">
-        <span className="text-[11px] text-mist">共 {entries.length} 条</span>
-        <ClearButton title="清空互传记录" onConfirm={clearAll} />
+        <span className="text-[11px] text-mist">{t.history.total(entries.length)}</span>
+        <ClearButton title={t.history.clear} onConfirm={clearAll} />
       </div>
       {entries.map((e) => (
         <div
@@ -68,16 +63,16 @@ export function HistoryList() {
               {e.direction === "send" ? "▲" : "▼"}
             </span>
             <span className="min-w-0 flex-1 truncate text-sm">
-              {e.direction === "send" ? "发往 " : "来自 "}
+              {e.direction === "send" ? t.transfer.sendTo : t.transfer.recvFrom}
               <span className="text-fog">{e.peerName}</span>
             </span>
-            <span className={`gauge-label ${STATUS_META[e.status].color}`}>
-              {STATUS_META[e.status].label}
+            <span className={`gauge-label ${STATUS_COLOR[e.status]}`}>
+              {t.transfer.status[e.status]}
             </span>
           </div>
           <div className="mt-1.5 flex items-center gap-3">
             <span className="font-gauge text-[11px] text-mist">
-              {e.filesDone} 个文件 · {humanBytes(e.bytes)} · {shortTime(e.at)}
+              {t.transfer.files(e.filesDone)} · {humanBytes(e.bytes)} · {shortTime(e.at)}
             </span>
             <span className="flex-1" />
             {e.lastPath && (
@@ -85,7 +80,7 @@ export function HistoryList() {
                 onClick={() => revealItemInDir(e.lastPath ?? "")}
                 className="shrink-0 cursor-pointer rounded border border-line-2 px-2 py-0.5 text-[11px] whitespace-nowrap text-fog/80 transition-colors hover:border-sonar/50 hover:text-sonar"
               >
-                显示
+                {t.transfer.reveal}
               </button>
             )}
           </div>

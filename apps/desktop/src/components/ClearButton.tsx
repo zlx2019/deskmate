@@ -2,13 +2,15 @@
 // 供互传记录与文字消息共用
 
 import { useEffect, useState } from "react";
+import { useI18n } from "../i18n";
 
 /** 卡片右上角的悬浮删除角标(hover 卡片时显示; 卡片容器需 relative group) */
 export function CardClose({ onClick }: { onClick: () => void }) {
+  const { t } = useI18n();
   return (
     <button
       onClick={onClick}
-      title="删除"
+      title={t.clear.delete}
       className="absolute -top-1.5 -right-1.5 hidden size-[18px] cursor-pointer items-center justify-center rounded-full border border-line-2 bg-panel-2 text-mist transition-colors group-hover:flex hover:border-alert/60 hover:text-alert"
     >
       <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -20,6 +22,7 @@ export function CardClose({ onClick }: { onClick: () => void }) {
 
 /** 清空按钮(垃圾桶图标 → 点击变"确认清空"红字) */
 export function ClearButton({ title, onConfirm }: { title: string; onConfirm: () => void }) {
+  const { t } = useI18n();
   const [arming, setArming] = useState(false);
 
   // 待确认态 3s 超时自动恢复
@@ -38,7 +41,7 @@ export function ClearButton({ title, onConfirm }: { title: string; onConfirm: ()
         }}
         className="cursor-pointer rounded border border-alert/40 px-2 py-0.5 text-[11px] text-alert/90 transition-colors hover:bg-alert/10"
       >
-        确认清空
+        {t.clear.confirm}
       </button>
     );
   }

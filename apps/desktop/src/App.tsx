@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useDeskmate } from "./hooks/useDeskmate";
+import { useI18n } from "./i18n";
 import { Radar } from "./components/Radar";
 import { TransferPanel } from "./components/TransferPanel";
 import {
@@ -31,6 +32,9 @@ const Header = memo(function Header({
   onToggleTheme: () => void;
   onOpenSettings: () => void;
 }) {
+  const { t } = useI18n();
+  // "N 台设备在线" 数字加粗: 文案按数字劈开两段, 中英文语序不同也能各自成立
+  const [onlineBefore, onlineAfter] = t.header.online(peerCount).split(String(peerCount));
   return (
     <header className="flex h-13 shrink-0 items-center gap-3 border-b border-line bg-panel px-4 transition-colors duration-300">
       <div className="flex items-center gap-2 text-[15px] font-medium tracking-[0.06em] text-fog">
@@ -40,14 +44,16 @@ const Header = memo(function Header({
       <div className="ml-auto flex items-center gap-3">
         <span className="flex items-center gap-1.5 text-[13px] text-mist">
           <span className="size-2 rounded-full bg-live" />
-          <span className="font-medium text-fog">{peerCount}</span> 台设备在线
+          {onlineBefore}
+          <span className="font-medium text-fog">{peerCount}</span>
+          {onlineAfter}
         </span>
         <span className="rounded-md border border-line px-2 py-1 text-xs text-faint">
-          端口 {self?.port ?? "…"}
+          {t.header.port(self?.port ?? "…")}
         </span>
         <button
           onClick={onToggleTheme}
-          title={theme === "dark" ? "切换到亮色" : "切换到暗色"}
+          title={theme === "dark" ? t.header.toLight : t.header.toDark}
           className="flex size-8 cursor-pointer items-center justify-center rounded-lg border border-line text-fog transition-colors hover:border-line-2"
         >
           {theme === "dark" ? (
@@ -65,7 +71,7 @@ const Header = memo(function Header({
         </button>
         <button
           onClick={onOpenSettings}
-          title="设置"
+          title={t.header.settings}
           className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-mist transition-colors hover:text-sonar"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -87,6 +93,7 @@ function hitPeer(pos: { x: number; y: number }): string | null {
 
 /** 应用根组件 */
 export default function App() {
+  const { t } = useI18n();
   const dm = useDeskmate();
   const [activePeer, setActivePeer] = useState<PeerDto | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -221,7 +228,7 @@ export default function App() {
           {dragging && (
             <div className="pointer-events-none absolute inset-x-0 bottom-20 text-center">
               <span className="rounded-full border border-ember/60 bg-panel px-4 py-1.5 text-sm text-ember">
-                {dragHover ? "松开即发送" : "拖到目标设备上发送"}
+                {dragHover ? t.radar.dropToSend : t.radar.dragToTarget}
               </span>
             </div>
           )}

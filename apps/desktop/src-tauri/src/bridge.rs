@@ -709,23 +709,24 @@ fn auto_copy_text(app: &AppHandle, text: &str) {
     }
 }
 
-/// 传输关键节点发系统通知(进度类高频事件不通知)
+/// 传输关键节点发系统通知(进度类高频事件不通知; 文案按当前语言实时取)
 fn notify_transfer_event(app: &AppHandle, event: &TransferEvent) {
+    let texts = crate::locale::current(app);
     match event {
-        TransferEvent::Completed { .. } => notify_if_unfocused(app, "deskmate", "文件传输完成"),
-        TransferEvent::Cancelled { .. } => notify_if_unfocused(app, "deskmate", "传输已取消"),
+        TransferEvent::Completed { .. } => {
+            notify_if_unfocused(app, "deskmate", texts.transfer_completed);
+        }
+        TransferEvent::Cancelled { .. } => {
+            notify_if_unfocused(app, "deskmate", texts.transfer_cancelled);
+        }
         TransferEvent::Interrupted { .. } => {
-            notify_if_unfocused(app, "deskmate", "传输意外中断, 未完成部分已保留");
+            notify_if_unfocused(app, "deskmate", texts.transfer_interrupted);
         }
         TransferEvent::TextReceived { from, text } => {
             // 自动复制开启时在标题标注, 不用打开窗口就知道可以直接粘贴
             // (事件泵先执行复制再走到这里, 文案与事实一致)
             let copied = lock(&app.state::<AppState>().settings).auto_copy_text;
-            let title = if copied {
-                format!("{} 发来文本 · 已复制", from.name)
-            } else {
-                format!("{} 发来文本", from.name)
-            };
+            let title = texts.text_from(&from.name, copied);
             notify_if_unfocused(app, &title, &preview_of(text));
         }
         _ => {}
