@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../api";
-import { readClipboardImagePng } from "../clipboard";
+import { readClipboardImagePng, screenshotName } from "../clipboard";
 import { EVENTS } from "../events";
 import { type PeerDto } from "../types";
 
@@ -163,6 +163,25 @@ export function MessageComposer({
               e.preventDefault();
               void send();
             }
+          }}
+          onPaste={(e) => {
+            // 粘贴的是图片(截图): 直接按截图文件发送, textarea 承载不了图片
+            const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
+              i.type.startsWith("image/"),
+            );
+            const file = item?.getAsFile();
+            if (!file || !target) return;
+            e.preventDefault();
+            void (async () => {
+              try {
+                const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+                await onSendImage(target, screenshotName(), bytes);
+                setTip("截图发送中, 见传输任务");
+                setTimeout(() => setTip(null), 2000);
+              } catch (err) {
+                setTip(String(err));
+              }
+            })();
           }}
           rows={2}
           placeholder="输入消息, Enter 发送(逐字原样送达)"

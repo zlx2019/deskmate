@@ -14,6 +14,12 @@ function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+/** 截图文件名: screenshot-YYYYMMDD-HHmmss.png(接收端以此落盘) */
+export function screenshotName(): string {
+  const t = new Date();
+  return `screenshot-${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}-${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}.png`;
+}
+
 /** 读取剪贴板图片并编码为 PNG; 剪贴板不是图片时返回 null */
 export async function readClipboardImagePng(): Promise<ClipboardImage | null> {
   const img = await readImage().catch(() => null);
@@ -31,9 +37,7 @@ export async function readClipboardImagePng(): Promise<ClipboardImage | null> {
     const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
     if (!blob) return null;
     const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
-    const t = new Date();
-    const name = `screenshot-${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}-${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}.png`;
-    return { bytes, name };
+    return { bytes, name: screenshotName() };
   } catch {
     return null;
   }
