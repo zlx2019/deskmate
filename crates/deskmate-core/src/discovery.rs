@@ -141,12 +141,28 @@ struct Registry {
     events: mpsc::Sender<PeerEvent>,
 }
 
+/// 节点信息的来源通道
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PeerSource {
+    /// mDNS 浏览: 事件驱动, 服务稳定期间不会重复产生 Resolved 事件
+    Mdns,
+    /// UDP 组播: 心跳驱动, 每个心跳周期刷新
+    Udp,
+}
+
 /// 注册表内的节点状态
+///
+/// 存活按来源通道分别维护: mDNS 只能由 ServiceRemoved(goodbye/TTL
+/// 过期)判死, 不能按时间超时 —— 它没有周期心跳可刷新; UDP 超过
+/// 超时窗口无心跳即判死。两个通道都死了节点才下线, 否则在组播被
+/// 网络拦截(仅 mDNS 可达)的环境里节点会在 15s 后被误踢。
 struct PeerState {
     /// 节点信息
     peer: Peer,
-    /// 最近一次心跳时间
-    last_seen: Instant,
+    /// 最近一次 UDP 心跳时间(从未经 UDP 见到为 None)
+    last_udp: Option<Instant>,
+    /// mDNS 通道在线(ServiceResolved 置位, ServiceRemoved 清除)
+    mdns_alive: bool,
 }
 
 impl Registry {
@@ -161,13 +177,14 @@ impl Registry {
     /// 合并去重后统一规整排序(IPv4 优先, 稳定排序保证不因通道交替抖动);
     /// 规整后无可用地址的更新直接丢弃, 等待后续携带可用地址的事件。
     /// 过期地址不逐个剔除, 依赖节点整体超时下线后重建列表。
-    fn upsert(&self, mut peer: Peer) {
+    fn upsert(&self, mut peer: Peer, source: PeerSource) {
         if peer.info.fingerprint == self.self_fingerprint {
             return;
         }
         let mut peers = self.lock_peers();
         let fingerprint = peer.info.fingerprint.clone();
-        let changed = match peers.get(&fingerprint) {
+        // 继承另一通道的存活标志: 新来源只增强存活, 不清除对方
+        let (changed, mut last_udp, mut mdns_alive) = match peers.get(&fingerprint) {
             Some(state) => {
                 let mut merged = state.peer.addrs.clone();
                 for addr in &peer.addrs {
@@ -176,21 +193,26 @@ impl Registry {
                     }
                 }
                 peer.addrs = normalize_addrs(merged);
-                state.peer != peer
+                (state.peer != peer, state.last_udp, state.mdns_alive)
             }
             None => {
                 peer.addrs = normalize_addrs(peer.addrs);
-                true
+                (true, None, false)
             }
         };
         if peer.addrs.is_empty() {
             return;
         }
+        match source {
+            PeerSource::Udp => last_udp = Some(Instant::now()),
+            PeerSource::Mdns => mdns_alive = true,
+        }
         peers.insert(
             fingerprint,
             PeerState {
                 peer: peer.clone(),
-                last_seen: Instant::now(),
+                last_udp,
+                mdns_alive,
             },
         );
         drop(peers);
@@ -207,24 +229,35 @@ impl Registry {
         }
     }
 
-    /// 按设备 ID 移除节点(mDNS ServiceRemoved 只给出 instance 名即设备 ID)
-    fn remove_by_device_id(&self, device_id: &str) {
-        let fingerprint = self
-            .lock_peers()
-            .values()
-            .find(|s| s.peer.info.device_id == device_id)
-            .map(|s| s.peer.info.fingerprint.clone());
-        if let Some(fp) = fingerprint {
+    /// mDNS 服务消失(goodbye 或 TTL 过期): 清除 mDNS 存活标志
+    ///
+    /// UDP 心跳仍然新鲜时保留节点(单通道退化不该闪下线), 否则立即
+    /// 移除。ServiceRemoved 只给出 instance 名即设备 ID。
+    fn mdns_removed(&self, device_id: &str, udp_timeout: Duration) {
+        let mut peers = self.lock_peers();
+        let Some((fp, state)) = peers
+            .iter_mut()
+            .find(|(_, s)| s.peer.info.device_id == device_id)
+        else {
+            return;
+        };
+        state.mdns_alive = false;
+        let udp_dead = state.last_udp.is_none_or(|t| t.elapsed() > udp_timeout);
+        let fp = fp.clone();
+        drop(peers);
+        if udp_dead {
             self.remove(&fp);
         }
     }
 
-    /// 清理超时未心跳的节点
+    /// 清理已死节点: mDNS 不在线, 且 UDP 心跳超时(或从未有过)
+    ///
+    /// mDNS 在线的节点不按时间踢 —— 它的下线由 ServiceRemoved 驱动。
     fn sweep(&self, timeout: Duration) {
         let expired: Vec<String> = self
             .lock_peers()
             .iter()
-            .filter(|(_, s)| s.last_seen.elapsed() > timeout)
+            .filter(|(_, s)| !s.mdns_alive && s.last_udp.is_none_or(|t| t.elapsed() > timeout))
             .map(|(fp, _)| fp.clone())
             .collect();
         for fp in expired {
@@ -530,12 +563,12 @@ fn start_mdns(
             match event {
                 mdns_sd::ServiceEvent::ServiceResolved(svc) => {
                     if let Some(peer) = peer_from_mdns(&svc) {
-                        reg.upsert(peer);
+                        reg.upsert(peer, PeerSource::Mdns);
                     }
                 }
                 mdns_sd::ServiceEvent::ServiceRemoved(_ty, fullname) => {
                     if let Some(device_id) = instance_of(&fullname) {
-                        reg.remove_by_device_id(device_id);
+                        reg.mdns_removed(device_id, PEER_TIMEOUT);
                     }
                 }
                 _ => {}
@@ -653,11 +686,14 @@ async fn start_udp(
                     match packet.kind {
                         AnnounceKind::Goodbye => reg.remove(&packet.info.fingerprint),
                         kind => {
-                            reg.upsert(Peer {
-                                info: packet.info,
-                                addrs: vec![src.ip()],
-                                port: packet.tcp_port,
-                            });
+                            reg.upsert(
+                                Peer {
+                                    info: packet.info,
+                                    addrs: vec![src.ip()],
+                                    port: packet.tcp_port,
+                                },
+                                PeerSource::Udp,
+                            );
                             // 收到 announce 回单播 response, 让新节点立刻看到自己
                             if kind == AnnounceKind::Announce {
                                 let response = read_packets(&packets).response.clone();
@@ -711,9 +747,9 @@ mod tests {
     #[tokio::test]
     async fn upsert_emits_only_on_change() {
         let (reg, mut rx) = test_registry("self");
-        reg.upsert(test_peer("aaa", "old"));
-        reg.upsert(test_peer("aaa", "old")); // 心跳: 无变化
-        reg.upsert(test_peer("aaa", "new")); // 改名: 有变化
+        reg.upsert(test_peer("aaa", "old"), PeerSource::Udp);
+        reg.upsert(test_peer("aaa", "old"), PeerSource::Udp); // 心跳: 无变化
+        reg.upsert(test_peer("aaa", "new"), PeerSource::Udp); // 改名: 有变化
         assert!(matches!(rx.try_recv(), Ok(PeerEvent::Up(p)) if p.info.name == "old"));
         assert!(matches!(rx.try_recv(), Ok(PeerEvent::Up(p)) if p.info.name == "new"));
         assert!(rx.try_recv().is_err());
@@ -723,7 +759,7 @@ mod tests {
     #[tokio::test]
     async fn self_is_filtered() {
         let (reg, mut rx) = test_registry("self");
-        reg.upsert(test_peer("self", "me"));
+        reg.upsert(test_peer("self", "me"), PeerSource::Udp);
         assert!(rx.try_recv().is_err());
         assert!(reg.snapshot().is_empty());
     }
@@ -736,17 +772,17 @@ mod tests {
         let addr_b = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 
         // UDP 先报单地址 A
-        reg.upsert(test_peer("aaa", "n"));
+        reg.upsert(test_peer("aaa", "n"), PeerSource::Udp);
         assert!(matches!(rx.try_recv(), Ok(PeerEvent::Up(p)) if p.addrs == vec![addr_a]));
 
         // mDNS 报 [B, A]: 以既有顺序为基合并成 [A, B], 新地址 B 触发 Up
         let mut peer = test_peer("aaa", "n");
         peer.addrs = vec![addr_b, addr_a];
-        reg.upsert(peer);
+        reg.upsert(peer, PeerSource::Mdns);
         assert!(matches!(rx.try_recv(), Ok(PeerEvent::Up(p)) if p.addrs == vec![addr_a, addr_b]));
 
         // UDP 心跳再报单地址 A: 合并结果不变, 不得再发事件
-        reg.upsert(test_peer("aaa", "n"));
+        reg.upsert(test_peer("aaa", "n"), PeerSource::Udp);
         assert!(rx.try_recv().is_err());
     }
 
@@ -754,12 +790,63 @@ mod tests {
     #[tokio::test]
     async fn remove_emits_down_once() {
         let (reg, mut rx) = test_registry("self");
-        reg.upsert(test_peer("bbb", "b"));
+        reg.upsert(test_peer("bbb", "b"), PeerSource::Udp);
         let _ = rx.try_recv();
         reg.remove("bbb");
         reg.remove("bbb"); // 已不存在, 不应再发
         assert!(matches!(rx.try_recv(), Ok(PeerEvent::Down(fp)) if fp == "bbb"));
         assert!(rx.try_recv().is_err());
+    }
+
+    /// 回归(线上): 仅 mDNS 可达(UDP 组播被网络拦截)时,
+    /// 节点不得被心跳超时误踢 —— mDNS 没有周期事件可刷新时间戳
+    #[tokio::test]
+    async fn mdns_peer_survives_sweep() {
+        let (reg, mut rx) = test_registry("self");
+        reg.upsert(test_peer("aaa", "n"), PeerSource::Mdns);
+        let _ = rx.try_recv();
+        // timeout 为 0: 凡按时间判死的节点都会被踢, mDNS 在线节点必须幸免
+        reg.sweep(Duration::ZERO);
+        assert!(rx.try_recv().is_err());
+        assert_eq!(reg.snapshot().len(), 1);
+    }
+
+    /// 纯 UDP 节点心跳超时后应被清理(原有语义不变)
+    #[tokio::test]
+    async fn udp_peer_swept_after_timeout() {
+        let (reg, mut rx) = test_registry("self");
+        reg.upsert(test_peer("aaa", "n"), PeerSource::Udp);
+        let _ = rx.try_recv();
+        reg.sweep(Duration::ZERO);
+        assert!(matches!(rx.try_recv(), Ok(PeerEvent::Down(fp)) if fp == "aaa"));
+        assert!(reg.snapshot().is_empty());
+    }
+
+    /// mDNS 服务消失且无 UDP 心跳: 节点立即下线
+    #[tokio::test]
+    async fn mdns_removed_downs_peer_without_udp() {
+        let (reg, mut rx) = test_registry("self");
+        reg.upsert(test_peer("aaa", "n"), PeerSource::Mdns);
+        let _ = rx.try_recv();
+        reg.mdns_removed("dev-aaa", PEER_TIMEOUT);
+        assert!(matches!(rx.try_recv(), Ok(PeerEvent::Down(fp)) if fp == "aaa"));
+        assert!(reg.snapshot().is_empty());
+    }
+
+    /// mDNS 消失但 UDP 心跳仍新鲜: 节点保留, 待 UDP 超时才随 sweep 下线
+    #[tokio::test]
+    async fn mdns_removed_keeps_peer_with_live_udp() {
+        let (reg, mut rx) = test_registry("self");
+        reg.upsert(test_peer("aaa", "n"), PeerSource::Mdns);
+        reg.upsert(test_peer("aaa", "n"), PeerSource::Udp);
+        let _ = rx.try_recv();
+        // UDP 心跳在超时窗口内: 不下线
+        reg.mdns_removed("dev-aaa", PEER_TIMEOUT);
+        assert!(rx.try_recv().is_err());
+        assert_eq!(reg.snapshot().len(), 1);
+        // UDP 也超时(timeout=0)后由 sweep 收尾
+        reg.sweep(Duration::ZERO);
+        assert!(matches!(rx.try_recv(), Ok(PeerEvent::Down(fp)) if fp == "aaa"));
     }
 
     /// UDP 报文序列化往返
@@ -804,14 +891,14 @@ mod tests {
         // 只有链路本地地址: 不进注册表、不发事件
         let mut peer = test_peer("aaa", "n");
         peer.addrs = vec![ll6];
-        reg.upsert(peer);
+        reg.upsert(peer, PeerSource::Mdns);
         assert!(rx.try_recv().is_err());
         assert!(reg.snapshot().is_empty());
 
         // IPv4 到达: 正常上报, 列表只含可用地址
         let mut peer = test_peer("aaa", "n");
         peer.addrs = vec![ll6, v4];
-        reg.upsert(peer);
+        reg.upsert(peer, PeerSource::Mdns);
         assert!(matches!(rx.try_recv(), Ok(PeerEvent::Up(p)) if p.addrs == vec![v4]));
     }
 
