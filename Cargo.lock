@@ -1006,6 +1006,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "hostname",
+ "libc",
  "mdns-sd",
  "os_info",
  "rcgen",
@@ -1019,6 +1020,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

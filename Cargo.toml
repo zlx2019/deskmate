@@ -42,6 +42,12 @@ os_info = { version = "3", default-features = false }
 fs4 = "1"
 clap = { version = "4", features = ["derive"] }
 socket2 = "0.6"
+# 平台 IO 调优的系统绑定(预分配 / F_NOCACHE, 见 core 的 transfer/io_tuning.rs)
+libc = "0.2"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
 
 ### Lint rules
 [workspace.lints.rust]

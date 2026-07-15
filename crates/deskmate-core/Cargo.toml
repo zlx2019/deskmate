@@ -26,6 +26,13 @@ uuid.workspace = true
 hostname.workspace = true
 os_info.workspace = true
 
+# 平台 IO 调优(transfer/io_tuning.rs): unix 侧 fcntl/fallocate, Windows 侧文件预分配
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [dev-dependencies]
 
 [lints]

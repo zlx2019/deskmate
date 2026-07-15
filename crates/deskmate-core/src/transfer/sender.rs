@@ -439,6 +439,7 @@ async fn connect_tls(
     let config = Arc::new(client_config(identity, expected_fp)?);
     let tcp = connect_first(addrs, port).await?;
     tcp.set_nodelay(true)?;
+    super::io_tuning::tune_socket(&tcp);
     // SNI 用固定名, 证书校验只看指纹不看域名
     let name = ServerName::try_from("deskmate")
         .map_err(|e| TransferError::Io(std::io::Error::other(e)))?;
