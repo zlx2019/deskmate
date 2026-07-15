@@ -50,7 +50,9 @@ export const api = {
     invoke<number[] | null>("get_avatar_image", { hash: hash ?? null }),
   /** 系统通知(未聚焦才发; 窗口可能隐藏的场景反馈用, 如快捷键发送结果) */
   notify: (title: string, body: string) => invoke<void>("notify", { title, body }),
-  /** 发送剪贴板截图(PNG 字节落临时文件后走文件传输链), 返回任务 ID */
-  sendClipboardImage: (fingerprint: string, fileName: string, data: number[], pin?: string) =>
-    invoke<string>("send_clipboard_image", { fingerprint, fileName, data, pin: pin ?? null }),
+  /** 暂存剪贴板截图字节(raw 二进制通道, 避免大图 JSON 序列化膨胀), 返回暂存 ID */
+  stageClipboardImage: (data: Uint8Array) => invoke<string>("stage_clipboard_image", data),
+  /** 发送已暂存的剪贴板截图(走文件传输链), 返回任务 ID */
+  sendClipboardImage: (fingerprint: string, fileName: string, staged: string, pin?: string) =>
+    invoke<string>("send_clipboard_image", { fingerprint, fileName, staged, pin: pin ?? null }),
 };

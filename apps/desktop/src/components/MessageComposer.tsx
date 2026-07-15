@@ -25,7 +25,7 @@ export function MessageComposer({
   /** 发送成功后回调(把消息记入消息流) */
   onSent: (peerName: string, text: string) => void;
   /** 发送剪贴板截图(走文件传输链, 由快捷键触发) */
-  onSendImage: (peer: PeerDto, fileName: string, bytes: number[]) => Promise<void>;
+  onSendImage: (peer: PeerDto, fileName: string, bytes: Uint8Array) => Promise<void>;
 }) {
   // 文本必须逐字节原样发送, 不做任何 trim
   const [text, setText] = useState("");
@@ -76,6 +76,38 @@ export function MessageComposer({
   targetRef.current = target;
   const onSendImageRef = useRef(onSendImage);
   onSendImageRef.current = onSendImage;
+  // 截图发送防重入(快捷键连按/粘贴连击); ref 即时生效, 不等重渲染
+  const imageBusyRef = useRef(false);
+
+  /** 发送一张截图(快捷键与粘贴共用): 防重入 + 结果反馈 */
+  const sendImage = async (
+    peer: PeerDto,
+    fileName: string,
+    bytes: Uint8Array,
+    notifyResult: boolean,
+  ) => {
+    if (imageBusyRef.current) return;
+    imageBusyRef.current = true;
+    try {
+      await onSendImageRef.current(peer, fileName, bytes);
+      if (notifyResult) {
+        api.notify("截图发送中", `发往 ${peer.name}`).catch(console.error);
+      } else {
+        setTip("截图发送中, 见传输任务");
+        setTimeout(() => setTip(null), 2000);
+      }
+    } catch (e) {
+      if (notifyResult) {
+        api.notify("截图发送失败", String(e)).catch(console.error);
+      } else {
+        setTip(String(e));
+      }
+    } finally {
+      imageBusyRef.current = false;
+    }
+  };
+  const sendImageRef = useRef(sendImage);
+  sendImageRef.current = sendImage;
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let alive = true;
@@ -89,12 +121,7 @@ export function MessageComposer({
       // 剪贴板是截图: 编码 PNG 走文件传输链(对端按普通文件接收)
       const image = await readClipboardImagePng();
       if (image) {
-        try {
-          await onSendImageRef.current(peer, image.name, image.bytes);
-          api.notify("截图发送中", `发往 ${peer.name}`).catch(console.error);
-        } catch (e) {
-          api.notify("截图发送失败", String(e)).catch(console.error);
-        }
+        await sendImageRef.current(peer, image.name, image.bytes, true);
         return;
       }
       const clip = await readText().catch(() => null);
@@ -173,14 +200,8 @@ export function MessageComposer({
             if (!file || !target) return;
             e.preventDefault();
             void (async () => {
-              try {
-                const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-                await onSendImage(target, screenshotName(), bytes);
-                setTip("截图发送中, 见传输任务");
-                setTimeout(() => setTip(null), 2000);
-              } catch (err) {
-                setTip(String(err));
-              }
+              const bytes = new Uint8Array(await file.arrayBuffer());
+              await sendImage(target, screenshotName(), bytes, false);
             })();
           }}
           rows={2}

@@ -214,7 +214,7 @@ export const TransferPanel = memo(function TransferPanel({
   /** 文本发送成功(记入消息流) */
   onTextSent: (peerName: string, text: string) => void;
   /** 发送剪贴板截图(全局快捷键路径) */
-  onSendImage: (peer: PeerDto, fileName: string, bytes: number[]) => Promise<void>;
+  onSendImage: (peer: PeerDto, fileName: string, bytes: Uint8Array) => Promise<void>;
   /** 删除单条文字消息 */
   onRemoveText: (id: string) => void;
   /** 清空全部文字消息 */
