@@ -70,6 +70,9 @@ pub struct PeerInfo {
     /// serde default 保证与不带该字段的旧版本协议兼容。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar: Option<String>,
+    /// 操作系统版本描述(如 "Mac OS 15.3.1"); 协议 1.3 起, 旧版本可缺省
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_version: Option<String>,
 }
 
 /// 文件元数据(TransferRequest 清单项)
@@ -307,6 +310,7 @@ mod tests {
                     fingerprint: "f".repeat(64),
                     platform: "macos".into(),
                     avatar: Some("🦊".into()),
+                    os_version: Some("Mac OS 15.3".into()),
                 },
             },
             ControlMessage::TransferRequest {
@@ -337,13 +341,17 @@ mod tests {
         }
     }
 
-    /// 旧版本(无 avatar 字段)的设备信息必须能解析; 未设置头像时不序列化该字段
+    /// 旧版本(无 avatar/os_version 字段)的设备信息必须能解析;
+    /// 未设置的可选字段不得序列化(旧对端见到未知字段也能忽略, 但少一事)
     #[test]
-    fn peer_info_avatar_is_backward_compatible() {
+    fn peer_info_optional_fields_are_backward_compatible() {
         let legacy = r#"{"device_id":"d","name":"n","fingerprint":"f","platform":"macos"}"#;
         let info: PeerInfo = serde_json::from_str(legacy).unwrap();
         assert_eq!(info.avatar, None);
-        assert!(!serde_json::to_string(&info).unwrap().contains("avatar"));
+        assert_eq!(info.os_version, None);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("avatar"));
+        assert!(!json.contains("os_version"));
     }
 
     /// 文本消息序列化后内容字段不得被改动(逐字节一致性的护栏)

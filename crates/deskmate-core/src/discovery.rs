@@ -526,6 +526,10 @@ fn build_mdns_service(
     if let Some(avatar) = &info.avatar {
         props.insert("avatar".to_string(), avatar.clone());
     }
+    // OS 版本描述(协议 1.3 起, 可选)
+    if let Some(osv) = &info.os_version {
+        props.insert("osv".to_string(), osv.clone());
+    }
     Ok(mdns_sd::ServiceInfo::new(
         MDNS_SERVICE_TYPE,
         &info.device_id,
@@ -587,6 +591,7 @@ fn peer_from_mdns(svc: &mdns_sd::ResolvedService) -> Option<Peer> {
         fingerprint: svc.get_property_val_str("fp")?.to_string(),
         platform: svc.get_property_val_str("platform")?.to_string(),
         avatar: svc.get_property_val_str("avatar").map(str::to_string),
+        os_version: svc.get_property_val_str("osv").map(str::to_string),
     };
     // 多网卡会有多个地址: 规整后保留为候选(ScopedIp 携带 scope id, 这里仍只取裸地址)
     let addrs = normalize_addrs(svc.addresses.iter().map(|ip| ip.to_ip_addr()).collect());
@@ -737,6 +742,7 @@ mod tests {
                 fingerprint: fp.to_string(),
                 platform: "macos".to_string(),
                 avatar: None,
+                os_version: None,
             },
             addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2))],
             port: 42424,

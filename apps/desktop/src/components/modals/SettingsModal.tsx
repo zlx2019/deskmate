@@ -184,9 +184,9 @@ export function SettingsModal({
                 <div className="flex gap-1.5">
                   {(
                     [
-                      ["rename", "自动重命名"],
+                      ["rename", "重命名"],
                       ["overwrite", "覆盖"],
-                      ["ask", "每次询问"],
+                      ["ask", "询问"],
                     ] as const
                   ).map(([value, label]) => (
                     <button
@@ -243,7 +243,7 @@ export function SettingsModal({
                 <input
                   value={settings.displayName ?? ""}
                   onChange={(e) => setSettings({ ...settings, displayName: e.target.value })}
-                  placeholder="留空则使用主机名"
+                  placeholder="默认为主机名"
                   className="w-full rounded-md border border-line-2 bg-abyss/60 px-3 py-1.5 text-sm text-fog outline-none focus:border-sonar/60"
                 />
 
@@ -308,7 +308,7 @@ export function SettingsModal({
                   onChange={(e) =>
                     setSettings({ ...settings, pin: e.target.value || null })
                   }
-                  placeholder="留空关闭; 启用后对方发送必须输入此 PIN"
+                  placeholder="不设置表示无需配对"
                   className="w-full rounded-md border border-line-2 bg-abyss/60 px-3 py-1.5 font-gauge text-sm text-fog outline-none focus:border-sonar/60"
                 />
 

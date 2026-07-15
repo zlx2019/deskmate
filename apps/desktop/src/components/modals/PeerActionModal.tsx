@@ -140,7 +140,7 @@ export function PeerActionModal({
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-fog">{peer.name}</div>
             <div className="gauge-label mt-0.5">
-              {peer.platform} · {peer.addrs[0] ?? "?"}:{peer.port}
+              {peer.osVersion ?? peer.platform} · {peer.addrs[0] ?? "?"}:{peer.port}
             </div>
           </div>
         </div>
