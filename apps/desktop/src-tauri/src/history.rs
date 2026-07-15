@@ -76,6 +76,20 @@ impl HistoryStore {
         tauri::async_runtime::spawn_blocking(move || store.flush());
     }
 
+    /// 删除一条(按 transfer_id 定位, 同 ID 只会有一条), 随后异步落盘
+    pub fn remove(self: &Arc<Self>, transfer_id: &str) {
+        lock(&self.entries).retain(|e| e.transfer_id != transfer_id);
+        let store = Arc::clone(self);
+        tauri::async_runtime::spawn_blocking(move || store.flush());
+    }
+
+    /// 清空全部历史, 随后异步落盘
+    pub fn clear(self: &Arc<Self>) {
+        lock(&self.entries).clear();
+        let store = Arc::clone(self);
+        tauri::async_runtime::spawn_blocking(move || store.flush());
+    }
+
     /// 把当前内存快照写盘(阻塞调用, 只在线程池内使用)
     ///
     /// 并发追加时后台任务可能乱序执行, 但每次都取"此刻最新"快照,

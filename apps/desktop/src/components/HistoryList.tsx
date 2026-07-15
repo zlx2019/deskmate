@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { humanBytes, type HistoryEntry } from "../types";
+import { CardClose, ClearButton } from "./ClearButton";
 
 /** 状态文案与颜色(与传输卡片的语义一致) */
 const STATUS_META: Record<HistoryEntry["status"], { label: string; color: string }> = {
@@ -22,13 +23,25 @@ function shortTime(ts: number): string {
     : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
-/** 互传记录列表(窄栏紧凑两行布局) */
+/** 互传记录列表(窄栏紧凑两行布局, 支持单条删除与一键清空) */
 export function HistoryList() {
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
 
   useEffect(() => {
     api.getHistory().then(setEntries).catch(() => setEntries([]));
   }, []);
+
+  /** 删除单条: 先本地移除保证即时反馈, 后端删除失败仅记录 */
+  const removeOne = (transferId: string) => {
+    setEntries((prev) => prev?.filter((e) => e.transferId !== transferId) ?? prev);
+    api.deleteHistory(transferId).catch(console.error);
+  };
+
+  /** 清空全部(ClearButton 已做二段确认) */
+  const clearAll = () => {
+    setEntries([]);
+    api.clearHistory().catch(console.error);
+  };
 
   if (entries === null) {
     return <div className="px-4 py-8 text-center text-xs text-mist/70">加载中…</div>;
@@ -38,11 +51,16 @@ export function HistoryList() {
   }
   return (
     <>
+      <div className="flex items-center justify-between px-1">
+        <span className="text-[11px] text-mist">共 {entries.length} 条</span>
+        <ClearButton title="清空互传记录" onConfirm={clearAll} />
+      </div>
       {entries.map((e) => (
         <div
           key={`${e.transferId}-${e.at}`}
-          className="rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition-colors duration-300"
+          className="group relative rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition-colors duration-300"
         >
+          <CardClose onClick={() => removeOne(e.transferId)} />
           <div className="flex items-center gap-2">
             <span
               className={`font-gauge text-xs ${e.direction === "send" ? "text-ember" : "text-sonar"}`}
@@ -65,7 +83,7 @@ export function HistoryList() {
             {e.lastPath && (
               <button
                 onClick={() => revealItemInDir(e.lastPath ?? "")}
-                className="cursor-pointer rounded border border-line-2 px-2 py-0.5 text-[11px] text-fog/80 transition-colors hover:border-sonar/50 hover:text-sonar"
+                className="shrink-0 cursor-pointer rounded border border-line-2 px-2 py-0.5 text-[11px] whitespace-nowrap text-fog/80 transition-colors hover:border-sonar/50 hover:text-sonar"
               >
                 显示
               </button>

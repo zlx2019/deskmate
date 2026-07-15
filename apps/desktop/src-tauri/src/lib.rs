@@ -86,6 +86,8 @@ pub fn run() {
             commands::get_avatar_image,
             commands::get_history,
             commands::append_history,
+            commands::delete_history,
+            commands::clear_history,
             commands::window_effects_active,
         ])
         .build(tauri::generate_context!())

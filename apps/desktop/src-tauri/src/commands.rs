@@ -464,6 +464,18 @@ pub fn append_history(state: State<'_, AppState>, entry: crate::history::History
     state.history.append(entry);
 }
 
+/// 删除一条传输历史(按 transfer_id 定位)
+#[tauri::command]
+pub fn delete_history(state: State<'_, AppState>, transfer_id: String) {
+    state.history.remove(&transfer_id);
+}
+
+/// 清空全部传输历史
+#[tauri::command]
+pub fn clear_history(state: State<'_, AppState>) {
+    state.history.clear();
+}
+
 /// 系统窗口材质(vibrancy/mica)是否生效; 前端据此启用半透明背景
 #[tauri::command]
 pub fn window_effects_active() -> bool {

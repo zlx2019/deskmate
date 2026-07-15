@@ -347,6 +347,14 @@ export function useDeskmate() {
     );
   }, []);
 
+  /** 删除一条文字消息(仅内存态) */
+  const removeText = useCallback((id: string) => {
+    setTexts((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
+  /** 清空全部文字消息(仅内存态) */
+  const clearTexts = useCallback(() => setTexts([]), []);
+
   /** 重新拉取本机信息(设置保存后昵称/头像即时刷新, 含新头像 Blob 加载) */
   const refreshSelf = () => {
     api
@@ -370,6 +378,8 @@ export function useDeskmate() {
     getPin,
     rememberPin,
     addSentText,
+    removeText,
+    clearTexts,
     refreshSelf,
     dispatch,
   };

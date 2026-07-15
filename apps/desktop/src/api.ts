@@ -38,9 +38,11 @@ export const api = {
   /** 设置读写 */
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
-  /** 传输历史: 读取(最新在前)与终态上报 */
+  /** 传输历史: 读取(最新在前)、终态上报、删除单条、清空 */
   getHistory: () => invoke<HistoryEntry[]>("get_history"),
   appendHistory: (entry: HistoryEntry) => invoke<void>("append_history", { entry }),
+  deleteHistory: (transferId: string) => invoke<void>("delete_history", { transferId }),
+  clearHistory: () => invoke<void>("clear_history"),
   /** 上传本机自定义头像(前端压缩后的 JPEG 字节, 重启后生效) */
   setAvatarImage: (data: number[]) => invoke<void>("set_avatar_image", { data }),
   /** 读取头像字节: hash 缺省取本机自定义头像, 传入则查对端缓存(未命中 null) */
