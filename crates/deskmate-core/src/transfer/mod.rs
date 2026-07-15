@@ -9,6 +9,7 @@
 //! v2 预留: 抽象平台特定后端(Linux io_uring + kTLS / Windows IOCP /
 //! macOS F_NOCACHE)与多流并行, 接口形态不变。
 
+mod io_tuning;
 mod receiver;
 mod sender;
 
@@ -593,6 +594,8 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut file = tokio::fs::File::open(path).await?;
+    // 大文件单次顺序读不驻留页缓存(macOS), 防挤掉其他应用热页
+    io_tuning::advise_no_cache(&file, size);
     let mut hasher = blake3::Hasher::new();
     if offset > 0 {
         // 重放后读位置自然停在 offset, 无需 seek

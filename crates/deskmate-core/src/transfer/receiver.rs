@@ -393,6 +393,7 @@ async fn handle_connection(
     ctx: Arc<ReceiverCtx>,
 ) -> Result<(), TransferError> {
     tcp.set_nodelay(true)?;
+    super::io_tuning::tune_socket(&tcp);
     // 未认证阶段限时: 握手与首帧必须尽快完成, 挡住"连上后不说话"的占坑连接
     let mut tls = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(tcp))
         .await
@@ -896,7 +897,7 @@ async fn receive_one_file(
 
     // FileFooter 是整文件哈希: 续传(offset > 0)时先重放 .part 既有前段
     let mut hasher = blake3::Hasher::new();
-    let mut file = open_part(&part_path, offset, &mut hasher, buf).await?;
+    let mut file = open_part(&part_path, offset, meta.size, &mut hasher, buf).await?;
 
     let (tid, rel_str, fid, size) = (
         Arc::clone(transfer_id),
@@ -970,14 +971,26 @@ fn part_path_of(target: &Path, transfer_id: &str) -> PathBuf {
 }
 
 /// 打开 .part 临时文件: 首传直接创建; 续传校验断点对齐并重放前段进哈希器
+///
+/// `size` 为整文件大小: 首传时预分配空间(磁盘不足立即失败而非写到一半),
+/// 大文件不驻留页缓存。预分配不改变文件长度(断点续传依赖 len)。
 async fn open_part(
     part_path: &Path,
     offset: u64,
+    size: u64,
     hasher: &mut blake3::Hasher,
     buf: &mut [u8],
 ) -> Result<tokio::fs::File, TransferError> {
     if offset == 0 {
-        return Ok(tokio::fs::File::create(part_path).await?);
+        let file = tokio::fs::File::create(part_path).await?;
+        // 预分配失败(磁盘不足)时清掉刚建的空 .part: 无数据可续传, 留着只碍事
+        if let Err(e) = super::io_tuning::preallocate(&file, size).await {
+            drop(file);
+            let _ = tokio::fs::remove_file(part_path).await;
+            return Err(e.into());
+        }
+        super::io_tuning::advise_no_cache(&file, size);
+        return Ok(file);
     }
     // 断点必须与 .part 当前长度一致, 否则数据将错位
     let part_len = tokio::fs::metadata(part_path).await.map(|m| m.len()).ok();
@@ -990,10 +1003,12 @@ async fn open_part(
     let mut existing = tokio::fs::File::open(part_path).await?;
     super::hash_prefix(&mut existing, hasher, offset, buf).await?;
     drop(existing);
-    Ok(tokio::fs::OpenOptions::new()
+    let file = tokio::fs::OpenOptions::new()
         .append(true)
         .open(part_path)
-        .await?)
+        .await?;
+    super::io_tuning::advise_no_cache(&file, size);
+    Ok(file)
 }
 
 /// 读取并校验 FileFooter: 文件编号与整文件哈希都必须匹配

@@ -34,6 +34,15 @@ pub const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 /// 单个候选地址的 TCP 连接超时(多网卡逐个尝试, 不宜过长)
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// 数据连接的内核收发缓冲上限(各平台默认多为 128-256KB, 高带宽或
+/// WiFi 抖动下限制在途窗口; 上限按需增长, 并非立即占用内存)
+pub const SOCKET_BUFFER_SIZE: usize = 4 * 1024 * 1024;
+
+/// 旁路页缓存的文件大小阈值: 阈值以上的单次顺序传输不驻留系统页缓存
+/// (macOS F_NOCACHE), 避免大文件把其他应用的热页挤掉;
+/// 小文件保持走缓存 —— 接收完大概率马上被打开
+pub const NOCACHE_THRESHOLD: u64 = 64 * 1024 * 1024;
+
 /// 数据通道空闲上限: 单次 chunk 读/写超过该时长无进展即中断(保留断点可续传)
 ///
 /// 取长值的原因: 一端本地暂停不会通知对端(协议无 Paused 事件),
