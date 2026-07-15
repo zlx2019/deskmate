@@ -24,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // macOS 用 LaunchAgent; 自启时带 --hidden 直接隐入托盘
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -40,6 +41,16 @@ pub fn run() {
             app.manage(state);
             setup_tray(app.handle())?;
             apply_window_effects(app.handle());
+            // 启动注册"发送剪贴板"全局快捷键(失败不阻断启动, 设置页重设可重试)
+            {
+                let hotkey = state::lock(&app.state::<state::AppState>().settings)
+                    .send_clipboard_hotkey
+                    .clone();
+                if let Err(e) = commands::apply_clipboard_hotkey(app.handle(), None, hotkey.as_deref())
+                {
+                    tracing::warn!("启动注册剪贴板快捷键失败: {e}");
+                }
+            }
             // Ctrl-C / SIGTERM 转优雅退出(dev 模式与命令行终止的常见路径):
             // 信号的默认行为是直接终止进程, RunEvent::Exit 不会触发,
             // goodbye 与 mDNS 注销都发不出去, 对端要等 TTL 过期才感知下线
@@ -72,6 +83,7 @@ pub fn run() {
             commands::get_self_info,
             commands::list_peers,
             commands::send_files_to,
+            commands::send_clipboard_image,
             commands::send_text_to,
             commands::respond_offer,
             commands::precheck_receive,
@@ -89,6 +101,7 @@ pub fn run() {
             commands::delete_history,
             commands::clear_history,
             commands::window_effects_active,
+            commands::notify,
         ])
         .build(tauri::generate_context!())
         .expect("tauri 应用构建失败");

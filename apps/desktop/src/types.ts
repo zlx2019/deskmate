@@ -80,6 +80,8 @@ export interface Settings {
   pin: string | null;
   /** 收到文本时自动复制到系统剪贴板(即时生效) */
   autoCopyText: boolean;
+  /** 发送剪贴板的全局快捷键(null 关闭; Tauri 语法, 如 "CmdOrCtrl+Shift+D") */
+  sendClipboardHotkey: string | null;
 }
 
 /** 内置头像库(设置页挑选, 随发现报文广播) */

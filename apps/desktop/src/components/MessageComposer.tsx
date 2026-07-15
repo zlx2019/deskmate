@@ -1,7 +1,12 @@
 // 聊天式消息输入行: 选目标设备直接发文本(右栏文字消息区底部常驻)
+// 全局快捷键"发送剪贴板"也在此消费: 目标选择与 PIN 会话缓存都在这里
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../api";
+import { readClipboardImagePng, screenshotName } from "../clipboard";
+import { EVENTS } from "../events";
 import { type PeerDto } from "../types";
 
 /** 聊天输入行: 设备下拉 + 文本框(Enter 发送 / Shift+Enter 换行)+ PIN 补填 */
@@ -10,6 +15,7 @@ export function MessageComposer({
   getPin,
   onPinLearned,
   onSent,
+  onSendImage,
 }: {
   peers: PeerDto[];
   /** 会话缓存的对端 PIN */
@@ -18,6 +24,8 @@ export function MessageComposer({
   onPinLearned: (fingerprint: string, pin: string) => void;
   /** 发送成功后回调(把消息记入消息流) */
   onSent: (peerName: string, text: string) => void;
+  /** 发送剪贴板截图(走文件传输链, 由快捷键触发) */
+  onSendImage: (peer: PeerDto, fileName: string, bytes: number[]) => Promise<void>;
 }) {
   // 文本必须逐字节原样发送, 不做任何 trim
   const [text, setText] = useState("");
@@ -30,30 +38,85 @@ export function MessageComposer({
   // 选中的设备下线后自动回退到列表首位
   const target = peers.find((p) => p.fingerprint === targetFp) ?? peers[0];
 
-  /** 发送当前文本; 对方要求 PIN 时展开输入行等待补填后重发 */
-  const send = async () => {
-    if (!target || text.length === 0 || sending) return;
+  /** 发送指定内容(手动输入与快捷键剪贴板共用); 对方要求 PIN 时展开补填行 */
+  const deliver = async (content: string): Promise<boolean> => {
+    if (!target || content.length === 0 || sending) return false;
     setSending(true);
     try {
       // 优先带刚补填的 PIN, 其次是会话缓存
       const pin = pinInput?.trim() || getPin(target.fingerprint);
-      const { pinRequired } = await api.sendText(target.fingerprint, text, pin);
+      const { pinRequired } = await api.sendText(target.fingerprint, content, pin);
       if (pinRequired) {
         setPinInput((prev) => prev ?? "");
         setTip("对方要求配对 PIN");
-        return;
+        return false;
       }
       if (pinInput?.trim()) onPinLearned(target.fingerprint, pinInput.trim());
       setPinInput(null);
       setTip(null);
-      onSent(target.name, text);
-      setText("");
+      onSent(target.name, content);
+      return true;
     } catch (e) {
       setTip(String(e));
+      return false;
     } finally {
       setSending(false);
     }
   };
+
+  /** 发送输入框文本, 成功后清空 */
+  const send = async () => {
+    if (await deliver(text)) setText("");
+  };
+
+  // 全局快捷键: 读剪贴板发给当前选中设备, 截图优先于文本(ref 透传避免闭包过期)
+  const deliverRef = useRef(deliver);
+  deliverRef.current = deliver;
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  const onSendImageRef = useRef(onSendImage);
+  onSendImageRef.current = onSendImage;
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let alive = true;
+    let unlisten: UnlistenFn | undefined;
+    listen(EVENTS.HOTKEY_SEND_CLIPBOARD, async () => {
+      const peer = targetRef.current;
+      if (!peer) {
+        api.notify("deskmate", "没有在线设备, 剪贴板未发送").catch(console.error);
+        return;
+      }
+      // 剪贴板是截图: 编码 PNG 走文件传输链(对端按普通文件接收)
+      const image = await readClipboardImagePng();
+      if (image) {
+        try {
+          await onSendImageRef.current(peer, image.name, image.bytes);
+          api.notify("截图发送中", `发往 ${peer.name}`).catch(console.error);
+        } catch (e) {
+          api.notify("截图发送失败", String(e)).catch(console.error);
+        }
+        return;
+      }
+      const clip = await readText().catch(() => null);
+      if (!clip) {
+        api.notify("deskmate", "剪贴板没有文本或截图, 未发送").catch(console.error);
+        return;
+      }
+      if (await deliverRef.current(clip)) {
+        api.notify("剪贴板已送达", `发往 ${peer.name}`).catch(console.error);
+      } else {
+        api.notify("剪贴板发送失败", "打开 deskmate 查看详情").catch(console.error);
+      }
+    }).then((u) => {
+      // StrictMode 下 effect 双跑, 迟到的订阅立即退订
+      if (alive) unlisten = u;
+      else u();
+    });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, []);
 
   if (peers.length === 0) {
     return (
@@ -100,6 +163,25 @@ export function MessageComposer({
               e.preventDefault();
               void send();
             }
+          }}
+          onPaste={(e) => {
+            // 粘贴的是图片(截图): 直接按截图文件发送, textarea 承载不了图片
+            const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
+              i.type.startsWith("image/"),
+            );
+            const file = item?.getAsFile();
+            if (!file || !target) return;
+            e.preventDefault();
+            void (async () => {
+              try {
+                const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+                await onSendImage(target, screenshotName(), bytes);
+                setTip("截图发送中, 见传输任务");
+                setTimeout(() => setTip(null), 2000);
+              } catch (err) {
+                setTip(String(err));
+              }
+            })();
           }}
           rows={2}
           placeholder="输入消息, Enter 发送(逐字原样送达)"
