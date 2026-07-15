@@ -161,7 +161,12 @@ pub fn os_version() -> &'static str {
     static OS_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     OS_VERSION.get_or_init(|| {
         let info = os_info::get();
-        format!("{} {}", info.os_type(), info.version())
+        // os_info 的 macOS 类型名是 "Mac OS", 修正为官方写法
+        let name = match info.os_type() {
+            os_info::Type::Macos => "macOS".to_string(),
+            t => t.to_string(),
+        };
+        format!("{} {}", name, info.version())
     })
 }
 
