@@ -7,6 +7,7 @@ export const en = {
     online: (n: number) => `${n} device${n === 1 ? "" : "s"} online`,
     port: (p: number | string) => `Port ${p}`,
     toLight: "Switch to light theme",
+    toSystem: "Follow system theme",
     toDark: "Switch to dark theme",
     settings: "Settings",
   },

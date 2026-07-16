@@ -4,7 +4,7 @@
    主题切换机制:
    Tailwind 4 的 @theme 把变量落在 :root, utility 全部经 var() 取值;
    给 <html> 加 data-theme="light" 即可整体换肤(下方覆盖块)。
-   偏好由前端存 localStorage("dm-theme"), 顶栏按钮切换。 */
+   偏好由前端存 localStorage("dm-theme"): system(默认, 跟随系统)/light/dark, 顶栏按钮三态循环。 */
 @import "tailwindcss";
 
 @theme {

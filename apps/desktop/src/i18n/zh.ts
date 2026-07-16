@@ -8,6 +8,7 @@ export const zh = {
     online: (n: number) => `${n} 台设备在线`,
     port: (p: number | string) => `端口 ${p}`,
     toLight: "切换到亮色",
+    toSystem: "跟随系统主题",
     toDark: "切换到暗色",
     settings: "设置",
   },

@@ -17,18 +17,26 @@ import { api } from "./api";
 import { avatarHashOf, type PeerDto, type SelfInfoDto, type TransferItem } from "./types";
 import logoUrl from "./assets/deskmate-logo.svg";
 
+/** 主题偏好: system 跟随操作系统, 其余为显式指定 */
+type ThemePref = "system" | "dark" | "light";
+
+/** 读取系统当前的明暗偏好(无 matchMedia 的环境按暗色) */
+function systemTheme(): "dark" | "light" {
+  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
 /** 顶栏(设计稿风: 方块 logo + 在线数 + 端口 badge + 主题切换 + 设置)
  * memo: 传输高频更新时 props 未变即跳过 */
 const Header = memo(function Header({
   self,
   peerCount,
-  theme,
+  themePref,
   onToggleTheme,
   onOpenSettings,
 }: {
   self: SelfInfoDto | null;
   peerCount: number;
-  theme: "dark" | "light";
+  themePref: ThemePref;
   onToggleTheme: () => void;
   onOpenSettings: () => void;
 }) {
@@ -53,19 +61,32 @@ const Header = memo(function Header({
         </span>
         <button
           onClick={onToggleTheme}
-          title={theme === "dark" ? t.header.toLight : t.header.toDark}
+          title={
+            themePref === "system"
+              ? t.header.toLight
+              : themePref === "light"
+                ? t.header.toDark
+                : t.header.toSystem
+          }
           className="flex size-8 cursor-pointer items-center justify-center rounded-lg border border-line text-fog transition-colors hover:border-line-2"
         >
-          {theme === "dark" ? (
-            /* 太阳: 当前暗色, 点击去亮色 */
+          {/* 图标表示点击后的去向: 跟随系统→亮色→暗色→跟随系统 */}
+          {themePref === "system" ? (
+            /* 太阳: 点击切到亮色 */
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <circle cx="12" cy="12" r="4" />
               <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
             </svg>
-          ) : (
-            /* 月亮: 当前亮色, 点击回暗色 */
+          ) : themePref === "light" ? (
+            /* 月亮: 点击切到暗色 */
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+            </svg>
+          ) : (
+            /* 显示器: 点击回到跟随系统 */
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <path d="M8 21h8M12 17v4" />
             </svg>
           )}
         </button>
@@ -99,19 +120,34 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   // 待输入 PIN 重试的被拒任务
   const [pinRetry, setPinRetry] = useState<TransferItem | null>(null);
-  // 主题偏好: localStorage 持久化, data-theme 驱动 CSS 变量整体换肤
-  const [theme, setTheme] = useState<"dark" | "light">(() =>
-    localStorage.getItem("dm-theme") === "light" ? "light" : "dark",
-  );
+  // 主题偏好: 跟随系统 / 亮 / 暗三态, localStorage 持久化;
+  // 未设置过的默认跟随系统, 老用户存过的显式值保持不变
+  const [themePref, setThemePref] = useState<ThemePref>(() => {
+    const saved = localStorage.getItem("dm-theme");
+    return saved === "light" || saved === "dark" ? saved : "system";
+  });
+  // 系统明暗(仅"跟随系统"偏好时参与渲染; 监听常驻, 系统切换实时生效)
+  const [sysTheme, setSysTheme] = useState<"dark" | "light">(systemTheme);
+  useEffect(() => {
+    const mq = window.matchMedia?.("(prefers-color-scheme: light)");
+    if (!mq) return;
+    const onChange = () => setSysTheme(systemTheme());
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  const theme = themePref === "system" ? sysTheme : themePref;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("dm-theme", theme);
-    // 原生窗口 chrome(标题栏/边框)与内容主题同步(Windows 上差异明显)
+    localStorage.setItem("dm-theme", themePref);
+    // 原生窗口 chrome(标题栏/边框)与内容主题同步(Windows 上差异明显);
+    // 跟随系统时把 chrome 也交还系统(null), 避免系统切换后 chrome 滞留
     if ("__TAURI_INTERNALS__" in window) {
-      getCurrentWindow().setTheme(theme).catch(console.error);
+      getCurrentWindow()
+        .setTheme(themePref === "system" ? null : themePref)
+        .catch(console.error);
     }
-  }, [theme]);
+  }, [theme, themePref]);
   const [dragging, setDragging] = useState(false);
   const [dragHover, setDragHover] = useState<string | null>(null);
 
@@ -196,7 +232,11 @@ export default function App() {
   // 派生数组与回调保持引用稳定, 配合子组件 memo 隔离传输高频更新
   const peerList = useMemo(() => Object.values(dm.peers), [dm.peers]);
   const transferList = useMemo(() => Object.values(dm.transfers), [dm.transfers]);
-  const toggleTheme = useCallback(() => setTheme((t) => (t === "dark" ? "light" : "dark")), []);
+  // 三态循环: 跟随系统 → 亮 → 暗 → 跟随系统
+  const toggleTheme = useCallback(
+    () => setThemePref((p) => (p === "system" ? "light" : p === "light" ? "dark" : "system")),
+    [],
+  );
   const openSettings = useCallback(() => setShowSettings(true), []);
   /** 取头像图片 URL(非图片头像或未就绪时为 undefined) */
   const srcOf = (avatar: string | null | undefined) => {
@@ -209,7 +249,7 @@ export default function App() {
       <Header
         self={self}
         peerCount={peerList.length}
-        theme={theme}
+        themePref={themePref}
         onToggleTheme={toggleTheme}
         onOpenSettings={openSettings}
       />
