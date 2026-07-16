@@ -177,6 +177,16 @@ pub enum TransferEvent {
         /// 中断原因
         reason: String,
     },
+    /// 对端暂停了传输(本端操作由 UI 乐观更新, 不经此事件)
+    Paused {
+        /// 传输任务 ID
+        transfer_id: String,
+    },
+    /// 对端恢复了传输
+    Resumed {
+        /// 传输任务 ID
+        transfer_id: String,
+    },
     /// 收到对端文本
     TextReceived {
         /// 发送方信息

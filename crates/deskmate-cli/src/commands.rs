@@ -340,6 +340,14 @@ fn print_transfer_event(event: TransferEvent, bar: &mut ProgressBar) {
             bar.clear();
             println!("⚠ 传输中断: {reason}(未完成部分已保留, 待续传)");
         }
+        TransferEvent::Paused { .. } => {
+            bar.clear();
+            println!("⏸ 对方已暂停传输");
+        }
+        TransferEvent::Resumed { .. } => {
+            bar.clear();
+            println!("▶ 对方已恢复传输");
+        }
         TransferEvent::TextReceived { from, text } => {
             bar.clear();
             println!("📋 来自 {} 的文本(已逐字节校验):", from.name);

@@ -45,10 +45,12 @@ pub const NOCACHE_THRESHOLD: u64 = 64 * 1024 * 1024;
 
 /// 数据通道空闲上限: 单次 chunk 读/写超过该时长无进展即中断(保留断点可续传)
 ///
-/// 取长值的原因: 一端本地暂停不会通知对端(协议无 Paused 事件),
-/// 对端表现为长时间收不到/发不出数据 —— 短超时会误杀合法暂停。
+/// 暂停会经控制连接显式转告对端(协议 1.4 起双向 Pause/Resume 帧),
+/// 双方 pump 都挂起等待、不吃本超时, 故无需再为"不可见暂停"放宽。
+/// 不取更短的原因: 断点续传两端各自重放已传段进哈希器(纯本地 IO),
+/// 磁盘速度差会让快端空等慢端, 需给这段差值留余量。
 /// 该值同时是恶意"半开连接"占用资源的时间上限。
-pub const DATA_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+pub const DATA_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ---- 接收端连接治理(receiver)----
 

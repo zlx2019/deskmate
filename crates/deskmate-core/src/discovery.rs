@@ -279,14 +279,22 @@ impl Registry {
     }
 }
 
+/// 广播侧的可变状态(隐身热切换与身份热更新共同维护, 单锁保一致)
+struct BroadcastState {
+    /// 当前广播身份(退出隐身重编码报文组用)
+    info: PeerInfo,
+    /// 隐身模式: 只收不发
+    passive: bool,
+    /// 本机 mDNS 服务全名(已注册时 Some, unregister 用)
+    mdns_fullname: Option<String>,
+}
+
 /// 发现服务: 注册本机 + 监听全网, 通过事件通道上报节点变化
 pub struct DiscoveryService {
     /// 节点注册表
     registry: Arc<Registry>,
     /// mDNS daemon(初始化失败则为 None, 降级为纯 UDP)
     mdns: Option<mdns_sd::ServiceDaemon>,
-    /// 本机 mDNS 服务全名(unregister 用)
-    mdns_fullname: Option<String>,
     /// UDP 组播 socket(初始化失败则为 None, 降级为纯 mDNS)
     udp: Option<Arc<UdpSocket>>,
     /// UDP 目标地址(组播组 + 端口)
@@ -295,8 +303,8 @@ pub struct DiscoveryService {
     packets: SharedPackets,
     /// 广播的 TCP 端口(mDNS 重注册用, 启动后不变)
     tcp_port: u16,
-    /// 隐身模式(只收不发, 热更新时跳过重新广播)
-    passive: bool,
+    /// 广播身份 / 隐身开关 / mDNS 注册名(运行时可变)
+    state: Mutex<BroadcastState>,
     /// 后台任务句柄(shutdown 时中止)
     tasks: Vec<JoinHandle<()>>,
 }
@@ -379,16 +387,80 @@ impl DiscoveryService {
             Self {
                 registry,
                 mdns,
-                mdns_fullname,
                 udp,
                 udp_target,
                 packets,
                 tcp_port,
-                passive,
+                state: Mutex::new(BroadcastState {
+                    info,
+                    passive,
+                    mdns_fullname,
+                }),
                 tasks,
             },
             events_rx,
         ))
+    }
+
+    /// 热切换隐身模式(即时生效, 不中断发现服务; 与当前状态相同时为空操作)
+    ///
+    /// 开启: 先发 goodbye 让对端立即下线, 再清空 UDP 报文组(心跳静默)、
+    /// 注销 mDNS 服务(对端经 ServiceRemoved 同步下线);
+    /// 关闭: 重编码报文组、重新注册 mDNS, 并立即 announce 加速对端可见。
+    /// 与 update_info 同理可能在无 tokio runtime 的线程被调用
+    /// (Tauri 同步命令的 IPC 线程), 全程只用同步/非阻塞接口。
+    pub fn set_passive(&self, passive: bool) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.passive == passive {
+            return;
+        }
+        state.passive = passive;
+        if passive {
+            // 先取告别报文再置空报文组, 顺序反了就发不出去了;
+            // UDP 不可靠, 连发两次提高送达率, 失败无碍(对端心跳超时兜底)
+            let goodbye = read_packets(&self.packets).goodbye.clone();
+            if let Some(udp) = &self.udp
+                && !goodbye.is_empty()
+            {
+                for _ in 0..2 {
+                    let _ = udp.try_send_to(&goodbye, self.udp_target.into());
+                }
+            }
+            *self.packets.write().unwrap_or_else(PoisonError::into_inner) =
+                UdpPackets::encode(&state.info, self.tcp_port, true);
+            if let Some(daemon) = &self.mdns
+                && let Some(fullname) = state.mdns_fullname.take()
+                && let Err(e) = daemon.unregister(&fullname)
+            {
+                tracing::warn!("mDNS 注销失败(对端将等 TTL 过期才下线): {e}");
+            }
+            tracing::info!("已进入隐身模式(只收不发)");
+        } else {
+            *self.packets.write().unwrap_or_else(PoisonError::into_inner) =
+                UdpPackets::encode(&state.info, self.tcp_port, false);
+            if let Some(daemon) = &self.mdns {
+                match build_mdns_service(&state.info, self.tcp_port) {
+                    Ok(service) => {
+                        let fullname = service.get_fullname().to_string();
+                        match daemon.register(service) {
+                            Ok(()) => state.mdns_fullname = Some(fullname),
+                            Err(e) => tracing::warn!("mDNS 重新注册失败: {e}"),
+                        }
+                    }
+                    Err(e) => tracing::warn!("mDNS 服务信息构造失败: {e}"),
+                }
+            }
+            // 立即宣告一次, 对端第一时间看到本机(否则要等下个心跳周期)
+            if let Some(udp) = &self.udp {
+                let announce = read_packets(&self.packets).announce.clone();
+                if !announce.is_empty()
+                    && let Err(e) = udp.try_send_to(&announce, self.udp_target.into())
+                {
+                    tracing::debug!("退出隐身的即时 announce 发送失败(心跳会补发): {e}");
+                }
+            }
+            tracing::info!("已退出隐身模式, 恢复广播");
+        }
     }
 
     /// 热更新广播身份(昵称/头像变更即时生效, 不中断发现服务)
@@ -399,11 +471,14 @@ impl DiscoveryService {
     /// - mDNS: 同名重复 register —— daemon 内部为覆盖语义, 会立刻广播
     ///   新 TXT 记录, 对端不会经历"下线再上线"
     pub fn update_info(&self, info: &PeerInfo) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.info = info.clone();
         *self.packets.write().unwrap_or_else(PoisonError::into_inner) =
-            UdpPackets::encode(info, self.tcp_port, self.passive);
-        if self.passive {
+            UdpPackets::encode(info, self.tcp_port, state.passive);
+        if state.passive {
             return;
         }
+        drop(state);
         if let Some(udp) = &self.udp {
             // 必须用同步接口: 本方法可能在无 tokio runtime 的线程被调用
             // (如 Tauri 同步命令的 IPC 线程), tokio::spawn 会直接 panic。
@@ -451,8 +526,17 @@ impl DiscoveryService {
                 }
             }
         }
-        if let (Some(mdns), Some(fullname)) = (&self.mdns, &self.mdns_fullname) {
-            let _ = mdns.unregister(fullname);
+        if let Some(mdns) = &self.mdns {
+            // 隐身期间 fullname 为 None(已注销), 但 daemon 的浏览仍需关停
+            let fullname = self
+                .state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .mdns_fullname
+                .take();
+            if let Some(fullname) = fullname {
+                let _ = mdns.unregister(&fullname);
+            }
             let _ = mdns.shutdown();
         }
         for task in &self.tasks {

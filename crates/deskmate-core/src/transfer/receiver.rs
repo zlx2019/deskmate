@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard};
 use std::time::Instant;
 
+use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf, split};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_rustls::TlsAcceptor;
@@ -105,6 +106,16 @@ pub enum OfferDecision {
     },
 }
 
+/// 控制会话的出站消息(读循环的应答与任务表的主动通知共用一条串行写通道)
+enum Outbound {
+    /// 单帧
+    Frame(ControlMessage),
+    /// 帧 + 紧随其后的裸数据(头像应答)
+    Payload(ControlMessage, Vec<u8>),
+    /// 读循环已结束: 写完在途消息后优雅关闭写半部
+    Shutdown,
+}
+
 /// 已被接受、等待或正在进行数据传输的任务
 struct PendingTransfer {
     /// 发送方信息(数据连接来源校验)
@@ -119,6 +130,8 @@ struct PendingTransfer {
     conflict: ConflictPolicy,
     /// 控制状态源(Pause/Resume/Cancel 写入, 数据会话订阅)
     control: watch::Sender<ControlState>,
+    /// 发送方控制会话的写通道: 本端暂停/取消时转告对端(会话断开即失效)
+    notify: mpsc::Sender<Outbound>,
     /// 已有数据会话占用(同一任务拒绝并发数据连接, 防 .part 互写)
     active: bool,
     /// 登记时刻(始终未开数据连接的条目按 TTL 清扫, 防泄漏)
@@ -180,19 +193,39 @@ impl ReceiverHandle {
         self.local_addr
     }
 
-    /// 暂停指定传输; 任务不存在返回 false
+    /// 暂停指定传输并转告发送方; 任务不存在返回 false
     pub fn pause(&self, transfer_id: &str) -> bool {
-        set_control(&self.pending, transfer_id, ControlState::Paused)
+        let ok = set_control(&self.pending, transfer_id, ControlState::Paused);
+        if ok {
+            notify_peer(
+                &self.pending,
+                transfer_id,
+                ControlMessage::Pause {
+                    transfer_id: transfer_id.to_string(),
+                },
+            );
+        }
+        ok
     }
 
-    /// 恢复指定传输; 任务不存在返回 false
+    /// 恢复指定传输并转告发送方; 任务不存在返回 false
     pub fn resume(&self, transfer_id: &str) -> bool {
-        set_control(&self.pending, transfer_id, ControlState::Running)
+        let ok = set_control(&self.pending, transfer_id, ControlState::Running);
+        if ok {
+            notify_peer(
+                &self.pending,
+                transfer_id,
+                ControlMessage::Resume {
+                    transfer_id: transfer_id.to_string(),
+                },
+            );
+        }
+        ok
     }
 
-    /// 取消指定传输(接收中的 .part 会被删除); 任务不存在返回 false
+    /// 取消指定传输并转告发送方(接收中的 .part 会被删除); 任务不存在返回 false
     pub fn cancel(&self, transfer_id: &str) -> bool {
-        cancel_transfer(&self.pending, transfer_id)
+        cancel_transfer(&self.pending, transfer_id, true)
     }
 
     /// 当前默认下载目录
@@ -424,29 +457,77 @@ async fn handle_connection(
     }
 }
 
-/// 控制会话: 应答握手后循环处理对端消息, 直至 Bye 或断连
+/// 控制会话: 读写拆分后由读循环处理进帧, 写泵串行写出应答与主动通知
+///
+/// 拆分的原因: 除请求-应答外, 本端的暂停/取消指令要经同一连接**主动**
+/// 推给发送方(任务表持写通道句柄), 而读循环常年阻塞在 read_frame 上,
+/// 单一持有者无法兼顾两个写入源。
 async fn control_session(
-    mut tls: TlsStream<TcpStream>,
+    tls: TlsStream<TcpStream>,
     peer: PeerInfo,
     ctx: &Arc<ReceiverCtx>,
 ) -> Result<(), TransferError> {
-    // 先快照再写帧: 读锁 guard 不能跨 await(std 锁非 Send)
+    let (mut rd, wr) = split(tls);
+    let (out_tx, out_rx) = mpsc::channel::<Outbound>(16);
+    let pump = tokio::spawn(write_pump(wr, out_rx));
+    let result = control_loop(&mut rd, &peer, ctx, &out_tx).await;
+    // 读循环结束: 让写泵写完在途消息后优雅关闭写半部
+    // (任务表可能仍持有通道克隆, 单靠 drop 无法让泵退出)
+    let _ = out_tx.send(Outbound::Shutdown).await;
+    drop(out_tx);
+    let _ = pump.await;
+    result
+}
+
+/// 控制会话写泵: 独占写半部, 串行写出读循环的应答与任务表的通知
+///
+/// 任何写失败(连接断开)即退出, 此后入队的消息随通道关闭而丢弃 ——
+/// 通知类消息本就尽力而为, 应答类消息的失败等价于会话断连。
+async fn write_pump(mut wr: WriteHalf<TlsStream<TcpStream>>, mut rx: mpsc::Receiver<Outbound>) {
+    while let Some(out) = rx.recv().await {
+        let ok = match out {
+            Outbound::Frame(msg) => write_frame(&mut wr, &msg).await.is_ok(),
+            Outbound::Payload(msg, data) => {
+                write_frame(&mut wr, &msg).await.is_ok()
+                    && wr.write_all(&data).await.is_ok()
+                    && wr.flush().await.is_ok()
+            }
+            Outbound::Shutdown => break,
+        };
+        if !ok {
+            return; // 连接已断, 无从(也无需)优雅关闭
+        }
+    }
+    // 正常收尾: 发出 close_notify 与 FIN, 对端读到干净的 EOF
+    let _ = wr.shutdown().await;
+}
+
+/// 控制会话读循环: 应答握手后逐帧处理, 直至 Bye 或断连
+///
+/// 出站消息统一经 `out` 入队; 入队失败说明写泵已因连接故障退出,
+/// 与读到断连同义, 循环正常终结。
+async fn control_loop(
+    rd: &mut ReadHalf<TlsStream<TcpStream>>,
+    peer: &PeerInfo,
+    ctx: &Arc<ReceiverCtx>,
+    out: &mpsc::Sender<Outbound>,
+) -> Result<(), TransferError> {
+    // 先快照再入队: 读锁 guard 不能跨 await(std 锁非 Send)
     let self_info = ctx
         .self_info
         .read()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
-    write_frame(
-        &mut tls,
-        &ControlMessage::HelloAck {
-            version: PROTOCOL_VERSION.to_string(),
-            info: self_info,
-        },
-    )
-    .await?;
+    let hello_ack = ControlMessage::HelloAck {
+        version: PROTOCOL_VERSION.to_string(),
+        info: self_info,
+    };
+    if out.send(Outbound::Frame(hello_ack)).await.is_err() {
+        return Ok(());
+    }
 
     loop {
-        match read_frame(&mut tls).await {
+        let reply = match read_frame(rd).await {
             Ok(ControlMessage::TransferRequest {
                 transfer_id,
                 files,
@@ -454,8 +535,8 @@ async fn control_session(
                 pin,
             }) => {
                 // PIN 是第一道门: 不过门连确认弹窗都不弹
-                let resp = if pin_ok(ctx, &peer.fingerprint, pin.as_deref()) {
-                    handle_request(&peer, transfer_id, files, total_size, ctx).await
+                if pin_ok(ctx, &peer.fingerprint, pin.as_deref()) {
+                    handle_request(peer, transfer_id, files, total_size, ctx, out).await
                 } else {
                     ControlMessage::TransferResponse {
                         transfer_id,
@@ -463,85 +544,85 @@ async fn control_session(
                         reason: Some("需要正确的配对 PIN".to_string()),
                         pin_required: true,
                     }
-                };
-                write_frame(&mut tls, &resp).await?;
+                }
             }
             Ok(ControlMessage::Text { text, pin }) => {
-                handle_text(&mut tls, &peer, text, pin.as_deref(), ctx).await?;
+                if pin_ok(ctx, &peer.fingerprint, pin.as_deref()) {
+                    ctx.sink
+                        .notify(TransferEvent::TextReceived {
+                            from: peer.clone(),
+                            text,
+                        })
+                        .await;
+                    ControlMessage::TextAck
+                } else {
+                    ControlMessage::TextRejected { pin_required: true }
+                }
             }
             Ok(ControlMessage::ResumeQuery { transfer_id }) => {
-                let files = resume_states(&peer, &transfer_id, ctx);
-                write_frame(&mut tls, &ControlMessage::ResumeInfo { transfer_id, files }).await?;
+                let files = resume_states(peer, &transfer_id, ctx, out);
+                ControlMessage::ResumeInfo { transfer_id, files }
             }
             Ok(ControlMessage::AvatarRequest) => {
-                handle_avatar_request(&mut tls, ctx).await?;
+                if !send_avatar(ctx, out).await {
+                    return Ok(());
+                }
+                continue;
             }
             Ok(ControlMessage::Pause { transfer_id }) => {
-                set_control(&ctx.pending, &transfer_id, ControlState::Paused);
+                // 对端(发送方)本地暂停: 同步引擎状态并上报事件驱动 UI
+                if set_control(&ctx.pending, &transfer_id, ControlState::Paused) {
+                    ctx.sink.notify(TransferEvent::Paused { transfer_id }).await;
+                }
+                continue;
             }
             Ok(ControlMessage::Resume { transfer_id }) => {
-                set_control(&ctx.pending, &transfer_id, ControlState::Running);
+                if set_control(&ctx.pending, &transfer_id, ControlState::Running) {
+                    ctx.sink
+                        .notify(TransferEvent::Resumed { transfer_id })
+                        .await;
+                }
+                continue;
             }
             Ok(ControlMessage::Cancel { transfer_id }) => {
-                cancel_transfer(&ctx.pending, &transfer_id);
+                // 对端发起的取消不回发通知(防指令回环); 终态由数据会话上报
+                cancel_transfer(&ctx.pending, &transfer_id, false);
+                continue;
             }
             // 对端优雅告别或断连: 控制会话正常终结
             Ok(ControlMessage::Bye) | Err(_) => return Ok(()),
             Ok(other) => {
                 tracing::debug!(kind = other.kind(), "控制会话忽略消息");
+                continue;
             }
+        };
+        if out.send(Outbound::Frame(reply)).await.is_err() {
+            return Ok(());
         }
     }
 }
 
-/// 处理文本消息: 过 PIN 门后上抛事件并回执; 不过门回结构化拒因
-async fn handle_text(
-    tls: &mut TlsStream<TcpStream>,
-    peer: &PeerInfo,
-    text: String,
-    pin: Option<&str>,
-    ctx: &Arc<ReceiverCtx>,
-) -> Result<(), TransferError> {
-    if pin_ok(ctx, &peer.fingerprint, pin) {
-        ctx.sink
-            .notify(TransferEvent::TextReceived {
-                from: peer.clone(),
-                text,
-            })
-            .await;
-        write_frame(tls, &ControlMessage::TextAck).await?;
-    } else {
-        write_frame(tls, &ControlMessage::TextRejected { pin_required: true }).await?;
-    }
-    Ok(())
-}
-
-/// 处理头像请求: 帧内报哈希与长度, 帧后紧跟裸图片字节(未设置时 size=0 无数据)
-async fn handle_avatar_request(
-    tls: &mut TlsStream<TcpStream>,
-    ctx: &Arc<ReceiverCtx>,
-) -> Result<(), TransferError> {
-    // 快照取出(hash 与字节成对), 避免持锁跨网络写
+/// 应答头像请求: 帧内报哈希与长度, 帧后紧跟裸图片字节(未设置时 size=0 无数据)
+///
+/// 返回 false 表示写泵已退出(连接断开), 调用方应结束会话。
+async fn send_avatar(ctx: &Arc<ReceiverCtx>, out: &mpsc::Sender<Outbound>) -> bool {
+    // 快照取出(hash 与字节成对), 避免持锁跨 await
     let snapshot = ctx
         .avatar
         .read()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
     let (hash, img) = snapshot.unwrap_or_default();
-    write_frame(
-        tls,
-        &ControlMessage::AvatarResponse {
-            hash,
-            size: img.len() as u64,
-        },
-    )
-    .await?;
-    if !img.is_empty() {
-        use tokio::io::AsyncWriteExt;
-        tls.write_all(&img).await?;
-        tls.flush().await?;
-    }
-    Ok(())
+    let msg = ControlMessage::AvatarResponse {
+        hash,
+        size: img.len() as u64,
+    };
+    let outbound = if img.is_empty() {
+        Outbound::Frame(msg)
+    } else {
+        Outbound::Payload(msg, img)
+    };
+    out.send(outbound).await.is_ok()
 }
 
 /// 处理传输请求: 上抛决策, 通过后登记任务表, 构造应答帧
@@ -551,6 +632,7 @@ async fn handle_request(
     files: Vec<FileMeta>,
     total_size: u64,
     ctx: &Arc<ReceiverCtx>,
+    out: &mpsc::Sender<Outbound>,
 ) -> ControlMessage {
     let reject = |transfer_id: String, reason: &str| ControlMessage::TransferResponse {
         transfer_id,
@@ -590,7 +672,16 @@ async fn handle_request(
                 return reject(transfer_id, "未选择任何有效文件");
             }
             let save_dir = save_dir.unwrap_or_else(|| read_lock(&ctx.download_dir).clone());
-            register_pending(peer, transfer_id, files, valid, save_dir, conflict, ctx)
+            register_pending(
+                peer,
+                transfer_id,
+                files,
+                valid,
+                save_dir,
+                conflict,
+                ctx,
+                out,
+            )
         }
         Ok(Ok(OfferDecision::Reject { reason })) => ControlMessage::TransferResponse {
             transfer_id,
@@ -605,6 +696,7 @@ async fn handle_request(
 
 /// 接受决策落地: 断点元数据先落盘(意外断连后凭它续传, 方案决策 #3),
 /// 登记任务表项, 返回接受应答帧
+#[expect(clippy::too_many_arguments, reason = "内部装配函数, 参数即登记上下文")]
 fn register_pending(
     peer: &PeerInfo,
     transfer_id: String,
@@ -613,6 +705,7 @@ fn register_pending(
     save_dir: PathBuf,
     conflict: ConflictPolicy,
     ctx: &Arc<ReceiverCtx>,
+    out: &mpsc::Sender<Outbound>,
 ) -> ControlMessage {
     // 同 ID 任务已在表中(在传或待传)时拒绝重复登记, 防止覆盖其控制通道
     if lock_pending(&ctx.pending).contains_key(&transfer_id) {
@@ -645,6 +738,7 @@ fn register_pending(
             save_dir,
             conflict,
             control,
+            notify: out.clone(),
             active: false,
             registered_at: Instant::now(),
         },
@@ -665,6 +759,7 @@ fn resume_states(
     peer: &PeerInfo,
     transfer_id: &str,
     ctx: &Arc<ReceiverCtx>,
+    out: &mpsc::Sender<Outbound>,
 ) -> Vec<ResumeFileState> {
     if !is_safe_transfer_id(transfer_id) {
         return Vec::new();
@@ -718,6 +813,7 @@ fn resume_states(
             save_dir: meta.save_dir.clone(),
             conflict: meta.conflict,
             control,
+            notify: out.clone(),
             active: false,
             registered_at: Instant::now(),
         },
@@ -1133,18 +1229,51 @@ fn lock_pending(pending: &PendingMap) -> MutexGuard<'_, HashMap<String, PendingT
 }
 
 /// 更新指定传输的控制状态; 任务不存在返回 false
+///
+/// send_replace 不依赖订阅者存在: 指令可能先于数据会话到达(彼时还
+/// 无人 subscribe), 状态存进通道, 迟来的订阅者照常读到最新值。
 fn set_control(pending: &PendingMap, transfer_id: &str, state: ControlState) -> bool {
-    lock_pending(pending)
+    match lock_pending(pending).get(transfer_id) {
+        Some(t) => {
+            t.control.send_replace(state);
+            true
+        }
+        None => false,
+    }
+}
+
+/// 把本端控制指令转告发送方(经其控制会话的写泵)
+///
+/// 尽力而为: 会话已断开时静默失败, 对端靠数据通道空闲超时兜底。
+/// try_send 不阻塞, 同步上下文(Tauri 命令的 IPC 线程)可安全调用。
+fn notify_peer(pending: &PendingMap, transfer_id: &str, msg: ControlMessage) {
+    let tx = lock_pending(pending)
         .get(transfer_id)
-        .map(|t| t.control.send(state).is_ok())
-        .unwrap_or(false)
+        .map(|t| t.notify.clone());
+    if let Some(tx) = tx
+        && tx.try_send(Outbound::Frame(msg)).is_err()
+    {
+        tracing::debug!(transfer_id, "控制指令转告发送方失败(会话可能已断开)");
+    }
 }
 
 /// 取消并移除指定传输; sender 随表项 drop, 订阅方保持 Cancelled 终态
-fn cancel_transfer(pending: &PendingMap, transfer_id: &str) -> bool {
+///
+/// `notify`: 本端发起时转告发送方; 对端发起的取消必须传 false(防指令回环)
+fn cancel_transfer(pending: &PendingMap, transfer_id: &str, notify: bool) -> bool {
     match lock_pending(pending).remove(transfer_id) {
         Some(task) => {
-            let _ = task.control.send(ControlState::Cancelled);
+            task.control.send_replace(ControlState::Cancelled);
+            if notify
+                && task
+                    .notify
+                    .try_send(Outbound::Frame(ControlMessage::Cancel {
+                        transfer_id: transfer_id.to_string(),
+                    }))
+                    .is_err()
+            {
+                tracing::debug!(transfer_id, "取消指令转告发送方失败(会话可能已断开)");
+            }
             true
         }
         None => false,

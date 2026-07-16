@@ -913,3 +913,161 @@ fn dedup_path_appends_counter() {
     std::fs::write(&noext, b"x").unwrap();
     assert_eq!(dedup_path(&noext), dir.path().join("bare (1)"));
 }
+
+/// 发送端本地暂停/恢复经控制连接转告接收端, 接收端上报 Paused/Resumed
+/// 事件驱动 UI(改造前对端暂停完全不可见, 界面停在"传输中")
+#[tokio::test]
+async fn sender_pause_is_visible_to_receiver() {
+    let mut h = harness(true).await;
+    let src = TempDir::new();
+    let file = src.path().join("pausable.bin");
+    std::fs::write(&file, pattern_data(4 * 1024 * 1024, 7)).unwrap();
+
+    // 发送前即置 Paused: 数据泵在首个 chunk 前挂起, 暂停窗口稳定无竞态
+    let (ctrl_tx, ctrl_rx) = watch::channel(ControlState::Paused);
+    let (ev_tx, _keep) = mpsc::channel(256);
+    let sender_id = Arc::clone(&h.sender_id);
+    let (fp, target) = (h.receiver_fp.clone(), h.target);
+    let send_task = tokio::spawn(async move {
+        send_files(
+            &sender_id,
+            &[target.0],
+            target.1,
+            Some(fp),
+            None,
+            None,
+            &[file],
+            ctrl_rx,
+            ev_tx,
+        )
+        .await
+    });
+
+    // 接收端先看到"对端已暂停", 恢复后看到"对端已恢复"并正常跑完
+    wait_event(&mut h.events, |e| matches!(e, TransferEvent::Paused { .. })).await;
+    ctrl_tx.send(ControlState::Running).unwrap();
+    wait_event(&mut h.events, |e| {
+        matches!(e, TransferEvent::Resumed { .. })
+    })
+    .await;
+    wait_event(&mut h.events, |e| {
+        matches!(e, TransferEvent::Completed { .. })
+    })
+    .await;
+    let summary = send_task.await.unwrap().unwrap();
+    assert_eq!(summary.files_sent, 1);
+}
+
+/// 接收端暂停/恢复经控制会话推给发送端, 发送端上报 Paused/Resumed
+/// (改造前接收端暂停对发送端只是"写不动", 唯有等空闲超时中断)
+#[tokio::test]
+async fn receiver_pause_notifies_sender() {
+    let h = harness(true).await;
+    let src = TempDir::new();
+    let file = src.path().join("recv-pause.bin");
+    std::fs::write(&file, pattern_data(32 * 1024 * 1024, 11)).unwrap();
+
+    let tid = uuid::Uuid::new_v4().to_string();
+    let (_ctrl_tx, ctrl_rx) = watch::channel(ControlState::Running);
+    let (ev_tx, mut sender_events) = mpsc::channel(256);
+    let sender_id = Arc::clone(&h.sender_id);
+    let (fp, target, tid_arg) = (h.receiver_fp.clone(), h.target, Some(tid.clone()));
+    let send_task = tokio::spawn(async move {
+        send_files(
+            &sender_id,
+            &[target.0],
+            target.1,
+            Some(fp),
+            tid_arg,
+            None,
+            &[file],
+            ctrl_rx,
+            ev_tx,
+        )
+        .await
+    });
+
+    // 数据开始流动(任务表已登记、数据阶段进行中)后接收端按下暂停
+    wait_event(&mut sender_events, |e| {
+        matches!(e, TransferEvent::Progress { .. })
+    })
+    .await;
+    assert!(h.handle.pause(&tid), "接收端暂停失败(任务不在表中)");
+    wait_event(&mut sender_events, |e| {
+        matches!(e, TransferEvent::Paused { .. })
+    })
+    .await;
+    assert!(h.handle.resume(&tid));
+    wait_event(&mut sender_events, |e| {
+        matches!(e, TransferEvent::Resumed { .. })
+    })
+    .await;
+    wait_event(&mut sender_events, |e| {
+        matches!(e, TransferEvent::Completed { .. })
+    })
+    .await;
+    send_task.await.unwrap().unwrap();
+}
+
+/// 接收端主动取消要以 Cancelled(而非 Interrupted)终结发送端:
+/// 取消指令经控制会话送达, 对端不再把主动取消误判为意外断连
+#[tokio::test]
+async fn receiver_cancel_settles_sender_as_cancelled() {
+    let mut h = harness(true).await;
+    let src = TempDir::new();
+    let file = src.path().join("cancelme.bin");
+    std::fs::write(&file, pattern_data(32 * 1024 * 1024, 13)).unwrap();
+
+    let tid = uuid::Uuid::new_v4().to_string();
+    let (_ctrl_tx, ctrl_rx) = watch::channel(ControlState::Running);
+    let (ev_tx, mut sender_events) = mpsc::channel(256);
+    let sender_id = Arc::clone(&h.sender_id);
+    let (fp, target, tid_arg) = (h.receiver_fp.clone(), h.target, Some(tid.clone()));
+    let send_task = tokio::spawn(async move {
+        send_files(
+            &sender_id,
+            &[target.0],
+            target.1,
+            Some(fp),
+            tid_arg,
+            None,
+            &[file],
+            ctrl_rx,
+            ev_tx,
+        )
+        .await
+    });
+
+    // 先暂停钉住双方数据泵, 再取消 —— 取消时序稳定不依赖传输速度
+    wait_event(&mut sender_events, |e| {
+        matches!(e, TransferEvent::Progress { .. })
+    })
+    .await;
+    assert!(h.handle.pause(&tid));
+    wait_event(&mut sender_events, |e| {
+        matches!(e, TransferEvent::Paused { .. })
+    })
+    .await;
+    assert!(h.handle.cancel(&tid));
+
+    // 双端都以 Cancelled 终结(改造前发送端只能感知为连接断开 → Interrupted)
+    wait_event(&mut sender_events, |e| {
+        matches!(e, TransferEvent::Cancelled { .. })
+    })
+    .await;
+    wait_event(&mut h.events, |e| {
+        matches!(e, TransferEvent::Cancelled { .. })
+    })
+    .await;
+    assert!(matches!(
+        send_task.await.unwrap(),
+        Err(TransferError::Cancelled)
+    ));
+
+    // 主动取消不留 .part 临时文件
+    let leftover = walkdir_names(&h.download_dir);
+    assert!(
+        !leftover.iter().any(|n| n.ends_with(super::PART_SUFFIX)),
+        "取消后残留临时文件: {leftover:?}"
+    );
+}

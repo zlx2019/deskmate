@@ -59,7 +59,9 @@ function TransferCard({
           <span className="text-fog">{item.peerName}</span>
         </span>
         <span className={`gauge-label ${STATUS_COLOR[item.status]}`}>
-          {t.transfer.status[item.status]}
+          {item.status === "paused" && item.pausedByPeer && !item.pausedLocal
+            ? t.transfer.pausedByPeer
+            : t.transfer.status[item.status]}
         </span>
       </div>
 
@@ -81,15 +83,16 @@ function TransferCard({
               {eta && ` · ${t.transfer.eta(eta)}`}
             </span>
             <span className="flex-1" />
+            {/* 仅对端暂停时不给"继续"按钮: 引擎取双方状态较大者, 本端恢复无效 */}
             {item.status === "active" ? (
               <PanelButton onClick={() => onPause(item.transferId)}>
                 {t.transfer.pause}
               </PanelButton>
-            ) : (
+            ) : item.pausedLocal ? (
               <PanelButton onClick={() => onResume(item.transferId)}>
                 {t.transfer.resume}
               </PanelButton>
-            )}
+            ) : null}
             <PanelButton danger onClick={() => api.cancel(item.transferId)}>
               {t.transfer.cancel}
             </PanelButton>

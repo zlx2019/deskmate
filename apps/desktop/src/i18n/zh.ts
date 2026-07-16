@@ -37,6 +37,7 @@ export const zh = {
     sendTo: "发往 ",
     recvFrom: "来自 ",
     pause: "暂停",
+    pausedByPeer: "对方已暂停",
     resume: "继续",
     cancel: "取消",
     reveal: "显示",

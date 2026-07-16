@@ -28,8 +28,13 @@ type TransferAction =
       peerFingerprint: string;
     }
   | { type: "event"; event: Exclude<TransferEventDto, { kind: "textReceived" }>; at: number }
-  // 本地发起的暂停/继续(pause/resume 命令成功后置状态; 引擎无 Paused 事件)
+  // 本地发起的暂停/继续(pause/resume 命令成功后置状态; 对端的经引擎事件到达)
   | { type: "setPaused"; transferId: string; paused: boolean };
+
+/** 由双端暂停标记推导进行态(任一端暂停即暂停, 双方都恢复才回到 active) */
+function runningStatus(pausedLocal?: boolean, pausedByPeer?: boolean): "active" | "paused" {
+  return pausedLocal || pausedByPeer ? "paused" : "active";
+}
 
 /** 构造传输事件聚合 reducer: 把逐文件的引擎事件折叠成面板条目
  *
@@ -60,16 +65,19 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
     };
   }
 
-  // 本地暂停/继续: 仅对进行中的任务生效, 终态不回退
+  // 本地暂停/继续: 仅对进行中的任务生效, 终态不回退;
+  // 状态由双端标记共同推导(对端仍暂停时本端恢复不足以回到 active)
   if (action.type === "setPaused") {
     const item = state[action.transferId];
     if (!item || (item.status !== "active" && item.status !== "paused")) return state;
+    const status = runningStatus(action.paused, item.pausedByPeer);
     return {
       ...state,
       [action.transferId]: {
         ...item,
-        status: action.paused ? "paused" : "active",
-        speed: action.paused ? 0 : item.speed,
+        pausedLocal: action.paused,
+        status,
+        speed: status === "paused" ? 0 : item.speed,
       },
     };
   }
@@ -138,6 +146,15 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
         reason: ev.reason ?? getLocale().transfer.rejectedDefault,
         pinRequired: ev.pinRequired,
       };
+      break;
+    // 对端暂停/恢复(本端操作不经引擎事件, 走上面的 setPaused)
+    case "paused":
+      if (prev.status !== "active" && prev.status !== "paused") break;
+      next = { ...prev, pausedByPeer: true, status: "paused", speed: 0 };
+      break;
+    case "resumed":
+      if (prev.status !== "active" && prev.status !== "paused") break;
+      next = { ...prev, pausedByPeer: false, status: runningStatus(prev.pausedLocal, false) };
       break;
   }
   return { ...state, [ev.transferId]: next };
@@ -380,7 +397,7 @@ export function useDeskmate() {
     [],
   );
 
-  /** 暂停传输: 命令确认引擎侧已暂停后, 本地同步条目状态(引擎无 Paused 事件) */
+  /** 暂停传输: 命令确认引擎侧已暂停后本地乐观更新(对端 UI 经引擎 Paused 事件同步) */
   const pauseTransfer = useCallback((transferId: string) => {
     api
       .pause(transferId)
