@@ -20,8 +20,10 @@ pub mod transfer;
 
 /// 协议版本号(major.minor), 握手阶段协商, major 不同则拒绝通信
 /// (1.1: 头像拉取 AvatarRequest/AvatarResponse; 1.2: PIN 配对与 TextRejected;
-/// 1.3: PeerInfo 可选 os_version 字段; minor 演进均向后兼容)
-pub const PROTOCOL_VERSION: &str = "1.3";
+/// 1.3: PeerInfo 可选 os_version 字段; 1.4: 双向主动推送 Pause/Resume/Cancel
+/// 帧, 对端暂停可感知 —— 帧本身 1.0 起即有定义, 旧版本能正确响应只是不发;
+/// minor 演进均向后兼容)
+pub const PROTOCOL_VERSION: &str = "1.4";
 
 /// 默认 TCP 监听端口(控制通道与数据通道复用, 握手时区分), 可在设置中修改
 pub const DEFAULT_TCP_PORT: u16 = 42424;

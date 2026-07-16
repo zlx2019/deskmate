@@ -12,9 +12,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rustls_pki_types::ServerName;
-use tokio::io::{AsyncReadExt, ReadHalf, split};
+use tokio::io::{AsyncReadExt, ReadHalf, WriteHalf, split};
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
@@ -276,13 +276,21 @@ async fn run_data_phase(
     control: watch::Receiver<ControlState>,
     sink: &EventSink,
 ) -> Result<SendSummary, TransferError> {
-    // 控制连接拆分: 读半部监听对端指令, 写半部留作结束时发 Bye
-    let (ctrl_read, mut ctrl_write) = split(ctrl);
+    // 控制连接拆分: 读半部监听对端指令, 写半部转告本端指令(结束时由其发 Bye)
+    let (ctrl_read, ctrl_write) = split(ctrl);
     let (remote_tx, remote_rx) = watch::channel(ControlState::Running);
     let listen_task = tokio::spawn(listen_remote_control(
         ctrl_read,
         transfer_id.clone(),
         remote_tx,
+        sink.clone(),
+    ));
+    let (stop_tx, stop_rx) = oneshot::channel();
+    let forward_task = tokio::spawn(forward_local_control(
+        ctrl_write,
+        control.clone(),
+        transfer_id.clone(),
+        stop_rx,
     ));
 
     let result = push_data(
@@ -298,9 +306,10 @@ async fn run_data_phase(
     )
     .await;
 
-    // 收尾: 停监听、尽力告别、上报终态事件
+    // 收尾: 停监听; 转发任务补齐未同步的终态并发 Bye 后自行结束
     listen_task.abort();
-    let _ = write_frame(&mut ctrl_write, &ControlMessage::Bye).await;
+    let _ = stop_tx.send(());
+    let _ = forward_task.await;
     match &result {
         Ok(_) => {
             sink.notify(TransferEvent::Completed {
@@ -580,18 +589,30 @@ async fn push_data(
 }
 
 /// 监听对端经控制连接下发的暂停/恢复/取消指令, 写入 remote 状态
+///
+/// 暂停/恢复顺带上报事件驱动 UI(取消不上报: 数据泵随即以
+/// `Cancelled` 终态收尾, 由终态事件统一呈现)。
 async fn listen_remote_control(
     mut ctrl_read: ReadHalf<TlsStream<TcpStream>>,
     transfer_id: String,
     remote: watch::Sender<ControlState>,
+    sink: EventSink,
 ) {
     loop {
         match read_frame(&mut ctrl_read).await {
             Ok(ControlMessage::Pause { transfer_id: id }) if id == transfer_id => {
                 let _ = remote.send(ControlState::Paused);
+                sink.notify(TransferEvent::Paused {
+                    transfer_id: transfer_id.clone(),
+                })
+                .await;
             }
             Ok(ControlMessage::Resume { transfer_id: id }) if id == transfer_id => {
                 let _ = remote.send(ControlState::Running);
+                sink.notify(TransferEvent::Resumed {
+                    transfer_id: transfer_id.clone(),
+                })
+                .await;
             }
             Ok(ControlMessage::Cancel { transfer_id: id }) if id == transfer_id => {
                 let _ = remote.send(ControlState::Cancelled);
@@ -604,6 +625,66 @@ async fn listen_remote_control(
             }
         }
     }
+}
+
+/// 把本端控制状态的变化经控制连接转告接收端(Pause/Resume/Cancel 帧)
+///
+/// 对端引擎收到即同步暂停/取消语义并驱动其 UI; 连接已断时静默退出,
+/// 对端靠数据通道空闲超时兜底。数据阶段结束(stop)或控制源释放时,
+/// 补发未同步的取消终态并发 Bye 告别 —— 写半部所有权在此任务,
+/// 告别只能由此发出。
+async fn forward_local_control(
+    mut ctrl_write: WriteHalf<TlsStream<TcpStream>>,
+    mut local: watch::Receiver<ControlState>,
+    transfer_id: String,
+    mut stop: oneshot::Receiver<()>,
+) {
+    // 对端的初始视角是 Running; 每次醒来先对齐差异, 再等下一次变化
+    let mut synced = ControlState::Running;
+    loop {
+        let now = *local.borrow();
+        if now != synced {
+            let msg = match now {
+                ControlState::Paused => ControlMessage::Pause {
+                    transfer_id: transfer_id.clone(),
+                },
+                ControlState::Running => ControlMessage::Resume {
+                    transfer_id: transfer_id.clone(),
+                },
+                ControlState::Cancelled => ControlMessage::Cancel {
+                    transfer_id: transfer_id.clone(),
+                },
+            };
+            if write_frame(&mut ctrl_write, &msg).await.is_err() {
+                return; // 控制连接已断, 告别也无从发出
+            }
+            synced = now;
+        }
+        if synced == ControlState::Cancelled {
+            break; // 取消是终态, 数据阶段随即收尾
+        }
+        tokio::select! {
+            changed = local.changed() => {
+                if changed.is_err() {
+                    break; // 控制源已释放(调用方收尾)
+                }
+            }
+            _ = &mut stop => break,
+        }
+    }
+    // stop 与状态变化可能同时就绪而 select 选中了 stop: 取消终态必须补发,
+    // 否则对端把主动取消误判为意外断连(保留 .part 等续传)
+    let last = *local.borrow();
+    if last == ControlState::Cancelled && synced != last {
+        let _ = write_frame(
+            &mut ctrl_write,
+            &ControlMessage::Cancel {
+                transfer_id: transfer_id.clone(),
+            },
+        )
+        .await;
+    }
+    let _ = write_frame(&mut ctrl_write, &ControlMessage::Bye).await;
 }
 
 /// 构造"收到意外消息"错误

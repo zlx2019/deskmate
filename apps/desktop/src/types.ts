@@ -51,6 +51,8 @@ export type TransferEventDto =
   | { kind: "completed"; transferId: string }
   | { kind: "cancelled"; transferId: string }
   | { kind: "interrupted"; transferId: string; reason: string }
+  | { kind: "paused"; transferId: string }
+  | { kind: "resumed"; transferId: string }
   | { kind: "rejected"; transferId: string; reason: string | null; pinRequired: boolean }
   | { kind: "textReceived"; fromName: string; fromFingerprint: string; text: string };
 
@@ -72,7 +74,7 @@ export interface Settings {
   conflictPolicy: ConflictPolicy;
   /** 内置头像(emoji); null 表示用首字母样式 */
   avatar: string | null;
-  /** 隐身模式: 只看别人不被看见(重启后生效) */
+  /** 隐身模式: 只看别人不被看见(保存即时生效) */
   passive: boolean;
   /** 开机自启(保存后即时生效) */
   autostart: boolean;
@@ -136,6 +138,10 @@ export interface TransferItem {
   reason?: string;
   /** 被拒且对方要求配对 PIN(显示"输入 PIN"重试按钮) */
   pinRequired?: boolean;
+  /** 本端按下了暂停(与对端标记独立, 双方都恢复才回到 active) */
+  pausedLocal?: boolean;
+  /** 对端按下了暂停(引擎 Paused/Resumed 事件驱动; 此间本端"继续"无效) */
+  pausedByPeer?: boolean;
   startedAt: number;
 }
 

@@ -34,6 +34,7 @@ export const en = {
     sendTo: "To ",
     recvFrom: "From ",
     pause: "Pause",
+    pausedByPeer: "Paused by peer",
     resume: "Resume",
     cancel: "Cancel",
     reveal: "Reveal",
