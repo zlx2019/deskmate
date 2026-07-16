@@ -543,6 +543,7 @@ async fn control_loop(
                         accepted_files: Vec::new(),
                         reason: Some("需要正确的配对 PIN".to_string()),
                         pin_required: true,
+                        reason_code: Some("pin_required".to_string()),
                     }
                 }
             }
@@ -634,16 +635,17 @@ async fn handle_request(
     ctx: &Arc<ReceiverCtx>,
     out: &mpsc::Sender<Outbound>,
 ) -> ControlMessage {
-    let reject = |transfer_id: String, reason: &str| ControlMessage::TransferResponse {
+    let reject = |transfer_id: String, reason: &str, code: &str| ControlMessage::TransferResponse {
         transfer_id,
         accepted_files: Vec::new(),
         reason: Some(reason.to_string()),
         pin_required: false,
+        reason_code: Some(code.to_string()),
     };
 
     // 任务 ID 会拼入断点元数据文件名, 非法字符直接拒绝
     if !is_safe_transfer_id(&transfer_id) {
-        return reject(transfer_id, "非法的任务 ID");
+        return reject(transfer_id, "非法的任务 ID", "bad_transfer_id");
     }
 
     let (reply_tx, reply_rx) = oneshot::channel();
@@ -655,7 +657,7 @@ async fn handle_request(
         reply: reply_tx,
     };
     if ctx.offers.send(offer).await.is_err() {
-        return reject(transfer_id, "接收方不可用");
+        return reject(transfer_id, "接收方不可用", "receiver_unavailable");
     }
 
     match tokio::time::timeout(OFFER_TIMEOUT, reply_rx).await {
@@ -669,7 +671,7 @@ async fn handle_request(
                 .filter(|id| files.iter().any(|f| f.file_id == *id))
                 .collect();
             if valid.is_empty() {
-                return reject(transfer_id, "未选择任何有效文件");
+                return reject(transfer_id, "未选择任何有效文件", "no_valid_files");
             }
             let save_dir = save_dir.unwrap_or_else(|| read_lock(&ctx.download_dir).clone());
             register_pending(
@@ -688,9 +690,10 @@ async fn handle_request(
             accepted_files: Vec::new(),
             reason,
             pin_required: false,
+            reason_code: Some("declined".to_string()),
         },
         // 上层丢弃回执或超时未决策, 一律按拒绝处理
-        Ok(Err(_)) | Err(_) => reject(transfer_id, "等待接收方决策超时"),
+        Ok(Err(_)) | Err(_) => reject(transfer_id, "等待接收方决策超时", "decision_timeout"),
     }
 }
 
@@ -714,6 +717,7 @@ fn register_pending(
             accepted_files: Vec::new(),
             reason: Some("同 ID 任务已在进行".to_string()),
             pin_required: false,
+            reason_code: Some("duplicate_task".to_string()),
         };
     }
     save_resume_meta(
@@ -748,6 +752,7 @@ fn register_pending(
         accepted_files: valid,
         reason: None,
         pin_required: false,
+        reason_code: None,
     }
 }
 
@@ -900,6 +905,8 @@ async fn data_session(
                 .notify(TransferEvent::Interrupted {
                     transfer_id,
                     reason: e.to_string(),
+                    code: e.code(),
+                    detail: e.detail(),
                 })
                 .await;
             Err(e)

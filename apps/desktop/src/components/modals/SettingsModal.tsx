@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../../api";
-import { getLocale, useI18n, type Lang } from "../../i18n";
+import { formatError, getLocale, useI18n, type Lang } from "../../i18n";
 import { AVATARS, avatarBlobUrl, type Settings } from "../../types";
 import { Button, ModalShell, ToggleRow } from "./ModalShell";
 
@@ -130,7 +130,7 @@ export function SettingsModal({
       setCustomPreview(avatarBlobUrl(Array.from(jpeg)));
       setSettings({ ...settings, avatar: "custom" });
     } catch (e) {
-      setTip(String(e));
+      setTip(formatError(e));
     }
   };
 
@@ -149,7 +149,7 @@ export function SettingsModal({
       onSaved();
       onClose();
     } catch (e) {
-      setTip(String(e));
+      setTip(formatError(e));
     }
   };
 
