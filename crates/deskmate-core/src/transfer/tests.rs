@@ -215,7 +215,14 @@ async fn rejection_propagates_reason() {
     .await
     .unwrap_err();
     match err {
-        TransferError::Rejected { reason } => assert_eq!(reason.as_deref(), Some("测试拒绝")),
+        TransferError::Rejected {
+            reason,
+            reason_code,
+        } => {
+            assert_eq!(reason.as_deref(), Some("测试拒绝"));
+            // 用户拒绝的结构化拒因(协议 1.4): 发送端可按本机语言渲染
+            assert_eq!(reason_code.as_deref(), Some("declined"));
+        }
         other => panic!("期望 Rejected, 得到: {other}"),
     }
 }

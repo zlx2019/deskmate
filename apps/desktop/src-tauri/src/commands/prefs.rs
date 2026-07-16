@@ -2,6 +2,7 @@
 
 use tauri::State;
 
+use super::ErrDto;
 use crate::settings::Settings;
 use crate::state::{AppState, lock};
 
@@ -17,8 +18,9 @@ pub fn save_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     settings: Settings,
-) -> Result<(), String> {
-    std::fs::create_dir_all(&settings.download_dir).map_err(|e| format!("下载目录不可用: {e}"))?;
+) -> Result<(), ErrDto> {
+    std::fs::create_dir_all(&settings.download_dir)
+        .map_err(|e| ErrDto::with("download_dir_unavailable", e))?;
     // 全局快捷键先于落盘应用: 注册失败(格式/冲突)时整个保存失败, 避免"文件已存新值但未生效"
     {
         let old = lock(&state.settings).send_clipboard_hotkey.clone();
@@ -32,7 +34,7 @@ pub fn save_settings(
     }
     settings
         .save(&state.data_dir)
-        .map_err(|e| format!("保存设置失败: {e}"))?;
+        .map_err(|e| ErrDto::with("settings_save_failed", e))?;
     state
         .receiver
         .set_download_dir(settings.download_dir.clone());
@@ -43,7 +45,7 @@ pub fn save_settings(
         let avatar_image = crate::bridge::load_avatar_image(&settings, &state.data_dir);
         let identity =
             crate::bridge::build_identity(&state.data_dir, &settings, avatar_image.as_deref())
-                .map_err(|e| format!("更新身份失败: {e}"))?;
+                .map_err(|e| ErrDto::with("identity_update_failed", e))?;
         // 展示字段有变化才向局域网重新广播, 避免无谓打扰
         if identity.display_name != old.display_name || identity.avatar != old.avatar {
             state
@@ -86,15 +88,15 @@ pub fn save_settings(
 ///
 /// 只落盘图片文件, `settings.avatar = "custom"` 由前端经 save_settings 统一持久化。
 #[tauri::command]
-pub fn set_avatar_image(state: State<'_, AppState>, data: Vec<u8>) -> Result<(), String> {
+pub fn set_avatar_image(state: State<'_, AppState>, data: Vec<u8>) -> Result<(), ErrDto> {
     if data.is_empty() {
-        return Err("图片数据为空".to_string());
+        return Err(ErrDto::new("avatar_empty"));
     }
     if data.len() as u64 > deskmate_core::protocol::MAX_AVATAR_SIZE {
-        return Err("图片超过 256KB 上限".to_string());
+        return Err(ErrDto::new("avatar_too_large"));
     }
     std::fs::write(state.data_dir.join(crate::settings::AVATAR_FILE), &data)
-        .map_err(|e| format!("保存头像失败: {e}"))
+        .map_err(|e| ErrDto::with("io", e))
 }
 
 /// 读取头像图片字节: hash 为 None 取本机自定义头像, Some 查对端缓存
@@ -125,7 +127,7 @@ pub(crate) fn apply_clipboard_hotkey(
     app: &tauri::AppHandle,
     old: Option<&str>,
     new: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), ErrDto> {
     use tauri::Emitter;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
     let gs = app.global_shortcut();
@@ -138,7 +140,7 @@ pub(crate) fn apply_clipboard_hotkey(
     let Some(new) = new.filter(|s| !s.is_empty()) else {
         return Ok(());
     };
-    let sc: Shortcut = new.parse().map_err(|e| format!("快捷键格式无效: {e}"))?;
+    let sc: Shortcut = new.parse().map_err(|e| ErrDto::with("hotkey_invalid", e))?;
     gs.on_shortcut(sc, |app, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
             // 目标设备与 PIN 会话缓存都在前端, 通知前端读剪贴板并发送
@@ -147,5 +149,5 @@ pub(crate) fn apply_clipboard_hotkey(
             }
         }
     })
-    .map_err(|e| format!("快捷键注册失败(可能与其他应用冲突): {e}"))
+    .map_err(|e| ErrDto::with("hotkey_conflict", e))
 }

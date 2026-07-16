@@ -9,11 +9,57 @@ pub mod receive;
 pub mod send;
 
 use deskmate_core::identity::platform;
+use deskmate_core::transfer::TransferError;
 use serde::Serialize;
 use tauri::State;
 
 use crate::bridge::PeerDto;
 use crate::state::AppState;
+
+/// 结构化命令错误: 前端按 `code` 查本地化文案, `detail` 为不译的原始细节
+/// (底层 IO 错误串/路径等, 附加在主句之后展示)
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrDto {
+    /// 稳定错误码(与前端 i18n 的 errors 分区键对应)
+    pub code: &'static str,
+    /// 细节参数
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl std::fmt::Display for ErrDto {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.detail {
+            Some(d) => write!(f, "{} ({d})", self.code),
+            None => f.write_str(self.code),
+        }
+    }
+}
+
+impl ErrDto {
+    /// 无细节的错误
+    pub fn new(code: &'static str) -> Self {
+        Self { code, detail: None }
+    }
+
+    /// 携带细节的错误
+    pub fn with(code: &'static str, detail: impl ToString) -> Self {
+        Self {
+            code,
+            detail: Some(detail.to_string()),
+        }
+    }
+}
+
+impl From<&TransferError> for ErrDto {
+    fn from(e: &TransferError) -> Self {
+        Self {
+            code: e.code(),
+            detail: e.detail(),
+        }
+    }
+}
 
 /// 本机信息(前端头部展示)
 #[derive(Debug, Clone, Serialize)]

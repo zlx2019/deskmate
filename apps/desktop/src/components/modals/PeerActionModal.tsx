@@ -5,7 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../../api";
 import { readClipboardImagePng } from "../../clipboard";
-import { useI18n } from "../../i18n";
+import { formatError, useI18n } from "../../i18n";
 import { type PeerDto } from "../../types";
 import { Avatar } from "../Radar";
 import { Button, ModalShell, ToggleRow } from "./ModalShell";
@@ -59,7 +59,7 @@ export function PeerActionModal({
       await api.saveSettings({ ...s, trusted: trustedList });
       setTrusted(next);
     } catch (e) {
-      setSentTip(String(e));
+      setSentTip(formatError(e));
     }
   };
 
@@ -96,7 +96,7 @@ export function PeerActionModal({
       setTimeout(() => setSentTip(null), 1500);
       return true;
     } catch (e) {
-      setSentTip(String(e));
+      setSentTip(formatError(e));
       return false;
     } finally {
       setSending(false);
@@ -120,7 +120,7 @@ export function PeerActionModal({
         return;
       }
     } catch (e) {
-      setSentTip(String(e));
+      setSentTip(formatError(e));
       return;
     } finally {
       setSending(false);

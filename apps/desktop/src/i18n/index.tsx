@@ -88,3 +88,30 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 export function useI18n(): I18nValue {
   return useContext(I18nContext);
 }
+
+/** 按错误码取当前语言文案; 未收录的码返回 null(调用方回退原始串) */
+function errorText(code: string, detail?: string | null): string | null {
+  const table = getLocale().errors as Record<string, string | undefined>;
+  const msg = table[code];
+  if (!msg) return null;
+  return detail ? `${msg} (${detail})` : msg;
+}
+
+/** 后端结构化错误(ErrDto)或任意异常 → 当前语言的展示文案 */
+export function formatError(e: unknown): string {
+  if (e && typeof e === "object" && "code" in e) {
+    const { code, detail } = e as { code: string; detail?: string };
+    const msg = errorText(code, detail);
+    if (msg) return msg;
+  }
+  return String(e);
+}
+
+/** 错误码 + 细节 → 展示文案(引擎事件路径; 码未收录时回退 fallback) */
+export function formatErrorCode(
+  code: string | null | undefined,
+  detail: string | null | undefined,
+  fallback: string,
+): string {
+  return (code ? errorText(code, detail) : null) ?? fallback;
+}

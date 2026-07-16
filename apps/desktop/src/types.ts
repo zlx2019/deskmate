@@ -50,10 +50,10 @@ export type TransferEventDto =
   | { kind: "fileCompleted"; transferId: string; fileId: number; path: string }
   | { kind: "completed"; transferId: string }
   | { kind: "cancelled"; transferId: string }
-  | { kind: "interrupted"; transferId: string; reason: string }
+  | { kind: "interrupted"; transferId: string; reason: string; code: string; detail: string | null }
   | { kind: "paused"; transferId: string }
   | { kind: "resumed"; transferId: string }
-  | { kind: "rejected"; transferId: string; reason: string | null; pinRequired: boolean }
+  | { kind: "rejected"; transferId: string; reason: string | null; pinRequired: boolean; reasonCode: string | null }
   | { kind: "textReceived"; fromName: string; fromFingerprint: string; text: string };
 
 /** 同名冲突策略: 自动重命名 / 覆盖 / 每次询问 */
