@@ -297,8 +297,18 @@ impl Registry {
         probes
     }
 
-    /// 探活失败的落地: 清除 mDNS 存活标志并移除节点
+    /// 指定节点的 UDP 心跳是否仍在窗口内(探活失败时以新证据否决判死)
+    fn udp_fresh(&self, fingerprint: &str, timeout: Duration) -> bool {
+        self.lock_peers()
+            .get(fingerprint)
+            .is_some_and(|s| s.last_udp.is_some_and(|t| t.elapsed() <= timeout))
+    }
+
+    /// 探活失败的直接落地: 清除 mDNS 存活标志并移除节点
     ///
+    /// 仅在 mDNS daemon 不可用(无法走 verify 缓存验证)时兜底使用;
+    /// 常规路径见 [`probe_peer`] —— 判死交给 verify 触发的 ServiceRemoved,
+    /// 节点表与 daemon 缓存同步清理。
     /// 探测期间(2s 窗口)节点可能刚经 UDP 复活(如网络闪断恢复),
     /// 心跳仍新鲜时以新证据为准保留 —— 探测结论只否定"mDNS 独证的存活"。
     fn probe_failed(&self, fingerprint: &str, udp_timeout: Duration) {
@@ -413,14 +423,16 @@ impl DiscoveryService {
             return Err(DiscoveryError::AllChannelsFailed);
         }
 
-        // 超时清理 + 崩溃探活任务(探测并发进行, 不阻塞清扫节奏)
+        // 超时清理 + 崩溃探活任务(探测并发进行, 不阻塞清扫节奏);
+        // daemon 克隆给探活路径做缓存验证(内部为命令通道句柄, 克隆廉价)
         let sweeper = Arc::clone(&registry);
+        let sweeper_mdns = mdns.clone();
         tasks.push(tokio::spawn(async move {
             let mut tick = tokio::time::interval(HEARTBEAT_INTERVAL);
             loop {
                 tick.tick().await;
                 for peer in sweeper.sweep(PEER_TIMEOUT) {
-                    tokio::spawn(probe_peer(Arc::clone(&sweeper), peer));
+                    tokio::spawn(probe_peer(Arc::clone(&sweeper), sweeper_mdns.clone(), peer));
                 }
             }
         }));
@@ -599,10 +611,18 @@ impl DiscoveryService {
 /// TCP 探活一个"仅 mDNS 在线"的可疑节点: 逐个候选地址尝试连接其传输端口
 ///
 /// 任一地址连接成功即判活(端口有监听 = 进程活着), 随即断开 —— 不做
-/// TLS 不发数据, 一次三次握手足矣; 全部被拒/超时则确认死亡。崩溃进程的
-/// 监听端口被 OS 立即回收(connect 秒收 RST), 拔线/断电等无应答场景由
-/// [`PEER_PROBE_TIMEOUT`] 兜底。
-async fn probe_peer(registry: Arc<Registry>, peer: Peer) {
+/// TLS 不发数据, 一次三次握手足矣。崩溃进程的监听端口被 OS 立即回收
+/// (connect 秒收 RST), 拔线/断电等无应答场景由 [`PEER_PROBE_TIMEOUT`] 兜底。
+///
+/// 全部被拒/超时时**不直接移除节点**, 而是触发 mDNS 缓存验证
+/// (RFC 6762 §10.4): daemon 主动查询该实例, 10s 无应答会 flush 缓存并发
+/// ServiceRemoved, 节点经既有 mdns_removed 路径移除 —— 节点表与 daemon
+/// 缓存一次同步清净, 对端此后任何时间重连都是"新发现"(必有 Up 事件)。
+/// 直接移除曾造成真实双机踩坑: 表先于缓存移除, 对端在缓存过期(TTL
+/// ≈2min)前重连时, 内容未变的记录只刷新 TTL 不产生任何事件, 本机对它
+/// 永久失明。误判场景(对端实际存活)verify 会得到应答, 缓存保持、
+/// 节点保留, 下一轮探活连接成功即自愈。
+async fn probe_peer(registry: Arc<Registry>, mdns: Option<mdns_sd::ServiceDaemon>, peer: Peer) {
     for addr in &peer.addrs {
         // 连接成功即证明进程在(drop 即断开); 被拒/超时则换下一个候选地址
         if let Ok(Ok(_alive)) = tokio::time::timeout(
@@ -614,7 +634,22 @@ async fn probe_peer(registry: Arc<Registry>, peer: Peer) {
             return;
         }
     }
-    registry.probe_failed(&peer.info.fingerprint, PEER_TIMEOUT);
+    // UDP 心跳在探测窗口内复活: 以新证据为准, 不打扰
+    if registry.udp_fresh(&peer.info.fingerprint, PEER_TIMEOUT) {
+        return;
+    }
+    match &mdns {
+        Some(daemon) => {
+            let fullname = format!("{}.{MDNS_SERVICE_TYPE}", peer.info.device_id);
+            tracing::info!(name = %peer.info.name, "TCP 探活失败, 触发 mDNS 缓存验证");
+            if let Err(e) = daemon.verify(fullname, mdns_sd::VERIFY_TIMEOUT_DEFAULT) {
+                tracing::warn!("mDNS 缓存验证发起失败, 退回直接移除: {e}");
+                registry.probe_failed(&peer.info.fingerprint, PEER_TIMEOUT);
+            }
+        }
+        // mDNS 通道不可用时表中不会有 mdns_alive 节点, 此分支仅为防御
+        None => registry.probe_failed(&peer.info.fingerprint, PEER_TIMEOUT),
+    }
 }
 
 /// 睡眠唤醒自愈: 检测系统睡眠恢复后重新加入组播组并立即宣告
@@ -1140,13 +1175,46 @@ mod tests {
         reg.upsert(dead.clone(), PeerSource::Mdns);
         while rx.try_recv().is_ok() {}
 
-        probe_peer(Arc::clone(&reg), live).await;
-        probe_peer(Arc::clone(&reg), dead).await;
+        // daemon 传 None: 测试无 mDNS 时的直接移除兜底路径
+        probe_peer(Arc::clone(&reg), None, live).await;
+        probe_peer(Arc::clone(&reg), None, dead).await;
 
         assert!(matches!(rx.try_recv(), Ok(PeerEvent::Down(fp)) if fp == "bbb"));
         let snapshot = reg.snapshot();
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].info.fingerprint, "aaa");
         drop(listener);
+    }
+
+    /// daemon 可用时探活失败不得直接移除节点: 判死交给 verify 触发的
+    /// ServiceRemoved(节点表与 daemon 缓存同步清理, 否则对端在缓存过期前
+    /// 重连会因"记录无变化不发事件"而永久失明 —— 真实双机回归)
+    #[tokio::test]
+    async fn probe_failure_with_daemon_defers_to_verify() {
+        let (reg, mut rx) = test_registry("self");
+        let Ok(daemon) = mdns_sd::ServiceDaemon::new() else {
+            eprintln!("跳过: 本环境无法创建 mDNS daemon");
+            return;
+        };
+
+        // 死端口: bind 后立即关闭
+        let dead_port = {
+            let l = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let mut dead = test_peer("aaa", "dead");
+        dead.addrs = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
+        dead.port = dead_port;
+        reg.upsert(dead.clone(), PeerSource::Mdns);
+        while rx.try_recv().is_ok() {}
+
+        probe_peer(Arc::clone(&reg), Some(daemon.clone()), dead).await;
+
+        // 节点仍在表中且无 Down 事件: 移除只能由 ServiceRemoved 驱动
+        assert!(rx.try_recv().is_err());
+        assert_eq!(reg.snapshot().len(), 1);
+        let _ = daemon.shutdown();
     }
 }
