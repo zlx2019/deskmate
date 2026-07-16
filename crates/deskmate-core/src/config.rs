@@ -17,6 +17,18 @@ pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// 节点超时: 超过该时长未见心跳即判定下线(容忍连续丢 2 次心跳)
 pub const PEER_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// 崩溃节点探活间隔: "仅 mDNS 在线且 UDP 静默"的节点每隔该时长 TCP 探测一次
+///
+/// 这类节点无法靠时间判死(mDNS 无周期心跳, 崩溃节点要等 SRV TTL ≈2min
+/// 过期), 探活把意外下线感知压到本间隔量级。取值边界: 不低于
+/// [`PEER_TIMEOUT`](15s, mDNS-only 属降级环境, 判死不该比主通道激进),
+/// 远小于 mDNS TTL(120s, 否则等 TTL 即可)。
+pub const PEER_PROBE_INTERVAL: Duration = Duration::from_secs(30);
+
+/// 单次探活的 TCP 连接超时: 进程崩溃由 RST 秒级判定(监听端口被 OS 立即
+/// 回收), 此超时兜底拔线/断电等无应答场景
+pub const PEER_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// 节点事件通道容量(满时丢弃, 消费方可用快照兜底)
 pub const EVENT_CHANNEL_CAP: usize = 64;
 

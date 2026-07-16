@@ -21,7 +21,9 @@ use tokio::task::JoinHandle;
 
 use crate::protocol::PeerInfo;
 
-use crate::config::{EVENT_CHANNEL_CAP, HEARTBEAT_INTERVAL, PEER_TIMEOUT};
+use crate::config::{
+    EVENT_CHANNEL_CAP, HEARTBEAT_INTERVAL, PEER_PROBE_INTERVAL, PEER_PROBE_TIMEOUT, PEER_TIMEOUT,
+};
 
 /// mDNS 服务类型
 pub const MDNS_SERVICE_TYPE: &str = "_deskmate._tcp.local.";
@@ -163,6 +165,8 @@ struct PeerState {
     last_udp: Option<Instant>,
     /// mDNS 通道在线(ServiceResolved 置位, ServiceRemoved 清除)
     mdns_alive: bool,
+    /// 最近一次 TCP 探活的发起时刻(节流用; 上线时视作刚探过)
+    last_probe: Option<Instant>,
 }
 
 impl Registry {
@@ -184,7 +188,7 @@ impl Registry {
         let mut peers = self.lock_peers();
         let fingerprint = peer.info.fingerprint.clone();
         // 继承另一通道的存活标志: 新来源只增强存活, 不清除对方
-        let (changed, mut last_udp, mut mdns_alive) = match peers.get(&fingerprint) {
+        let (changed, mut last_udp, mut mdns_alive, last_probe) = match peers.get(&fingerprint) {
             Some(state) => {
                 let mut merged = state.peer.addrs.clone();
                 for addr in &peer.addrs {
@@ -193,11 +197,17 @@ impl Registry {
                     }
                 }
                 peer.addrs = normalize_addrs(merged);
-                (state.peer != peer, state.last_udp, state.mdns_alive)
+                (
+                    state.peer != peer,
+                    state.last_udp,
+                    state.mdns_alive,
+                    state.last_probe,
+                )
             }
             None => {
                 peer.addrs = normalize_addrs(peer.addrs);
-                (true, None, false)
+                // 上线本身即活性证明, 视作刚探过: 首次探活等满一个完整间隔
+                (true, None, false, Some(Instant::now()))
             }
         };
         if peer.addrs.is_empty() {
@@ -213,6 +223,7 @@ impl Registry {
                 peer: peer.clone(),
                 last_udp,
                 mdns_alive,
+                last_probe,
             },
         );
         drop(peers);
@@ -250,20 +261,58 @@ impl Registry {
         }
     }
 
-    /// 清理已死节点: mDNS 不在线, 且 UDP 心跳超时(或从未有过)
+    /// 清理已死节点, 并返回需要 TCP 探活的可疑节点清单
     ///
-    /// mDNS 在线的节点不按时间踢 —— 它的下线由 ServiceRemoved 驱动。
-    fn sweep(&self, timeout: Duration) {
-        let expired: Vec<String> = self
-            .lock_peers()
-            .iter()
-            .filter(|(_, s)| !s.mdns_alive && s.last_udp.is_none_or(|t| t.elapsed() > timeout))
-            .map(|(fp, _)| fp.clone())
-            .collect();
+    /// - 清理: mDNS 不在线且 UDP 心跳超时(或从未有过)→ 直接移除;
+    ///   mDNS 在线的节点不按时间踢 —— 它的下线由 ServiceRemoved 驱动
+    /// - 探活: "仅 mDNS 在线且 UDP 静默"的节点无法靠时间判死(mDNS 无
+    ///   周期心跳, 崩溃节点要等 SRV TTL ≈2min 过期), 挑出来交调用方
+    ///   连接探测。此处顺带打探测时间戳(按 [`PEER_PROBE_INTERVAL`]
+    ///   节流), 返回即"该探了"
+    fn sweep(&self, timeout: Duration) -> Vec<Peer> {
+        let now = Instant::now();
+        let mut probes = Vec::new();
+        let expired: Vec<String> = {
+            let mut peers = self.lock_peers();
+            for state in peers.values_mut() {
+                let udp_silent = state.last_udp.is_none_or(|t| t.elapsed() > timeout);
+                let probe_due = state
+                    .last_probe
+                    .is_none_or(|t| t.elapsed() > PEER_PROBE_INTERVAL);
+                if state.mdns_alive && udp_silent && probe_due {
+                    state.last_probe = Some(now);
+                    probes.push(state.peer.clone());
+                }
+            }
+            peers
+                .iter()
+                .filter(|(_, s)| !s.mdns_alive && s.last_udp.is_none_or(|t| t.elapsed() > timeout))
+                .map(|(fp, _)| fp.clone())
+                .collect()
+        };
         for fp in expired {
             tracing::debug!(fingerprint = %fp, "节点心跳超时, 判定下线");
             self.remove(&fp);
         }
+        probes
+    }
+
+    /// 探活失败的落地: 清除 mDNS 存活标志并移除节点
+    ///
+    /// 探测期间(2s 窗口)节点可能刚经 UDP 复活(如网络闪断恢复),
+    /// 心跳仍新鲜时以新证据为准保留 —— 探测结论只否定"mDNS 独证的存活"。
+    fn probe_failed(&self, fingerprint: &str, udp_timeout: Duration) {
+        let mut peers = self.lock_peers();
+        let Some(state) = peers.get_mut(fingerprint) else {
+            return;
+        };
+        if state.last_udp.is_some_and(|t| t.elapsed() <= udp_timeout) {
+            return;
+        }
+        state.mdns_alive = false;
+        drop(peers);
+        tracing::info!(fingerprint = %fingerprint, "TCP 探活失败, 判定节点已崩溃下线");
+        self.remove(fingerprint);
     }
 
     /// 当前在线节点快照
@@ -364,13 +413,15 @@ impl DiscoveryService {
             return Err(DiscoveryError::AllChannelsFailed);
         }
 
-        // 超时清理任务
+        // 超时清理 + 崩溃探活任务(探测并发进行, 不阻塞清扫节奏)
         let sweeper = Arc::clone(&registry);
         tasks.push(tokio::spawn(async move {
             let mut tick = tokio::time::interval(HEARTBEAT_INTERVAL);
             loop {
                 tick.tick().await;
-                sweeper.sweep(PEER_TIMEOUT);
+                for peer in sweeper.sweep(PEER_TIMEOUT) {
+                    tokio::spawn(probe_peer(Arc::clone(&sweeper), peer));
+                }
             }
         }));
 
@@ -543,6 +594,27 @@ impl DiscoveryService {
             task.abort();
         }
     }
+}
+
+/// TCP 探活一个"仅 mDNS 在线"的可疑节点: 逐个候选地址尝试连接其传输端口
+///
+/// 任一地址连接成功即判活(端口有监听 = 进程活着), 随即断开 —— 不做
+/// TLS 不发数据, 一次三次握手足矣; 全部被拒/超时则确认死亡。崩溃进程的
+/// 监听端口被 OS 立即回收(connect 秒收 RST), 拔线/断电等无应答场景由
+/// [`PEER_PROBE_TIMEOUT`] 兜底。
+async fn probe_peer(registry: Arc<Registry>, peer: Peer) {
+    for addr in &peer.addrs {
+        // 连接成功即证明进程在(drop 即断开); 被拒/超时则换下一个候选地址
+        if let Ok(Ok(_alive)) = tokio::time::timeout(
+            PEER_PROBE_TIMEOUT,
+            tokio::net::TcpStream::connect((*addr, peer.port)),
+        )
+        .await
+        {
+            return;
+        }
+    }
+    registry.probe_failed(&peer.info.fingerprint, PEER_TIMEOUT);
 }
 
 /// 睡眠唤醒自愈: 检测系统睡眠恢复后重新加入组播组并立即宣告
@@ -1000,5 +1072,81 @@ mod tests {
             Some("uuid-1234")
         );
         assert_eq!(instance_of("._deskmate._tcp.local."), Some(""));
+    }
+
+    /// sweep 只挑"仅 mDNS 在线且 UDP 静默"且过了节流间隔的节点探活
+    #[tokio::test]
+    async fn sweep_flags_stale_mdns_only_peers_for_probe() {
+        let (reg, _rx) = test_registry("self");
+        // aaa: mDNS-only —— 探活对象(上线视作刚探过, 抹掉时间戳模拟间隔已满)
+        reg.upsert(test_peer("aaa", "a"), PeerSource::Mdns);
+        // bbb: UDP 心跳新鲜 —— 不探
+        reg.upsert(test_peer("bbb", "b"), PeerSource::Udp);
+        reg.lock_peers().get_mut("aaa").unwrap().last_probe = None;
+
+        let probes = reg.sweep(PEER_TIMEOUT);
+        assert_eq!(probes.len(), 1);
+        assert_eq!(probes[0].info.fingerprint, "aaa");
+        // 时间戳已打上: 下一轮清扫不得重复探测(节流)
+        assert!(reg.sweep(PEER_TIMEOUT).is_empty());
+        // 探活对象不被清理(mDNS 仍在线)
+        assert_eq!(reg.snapshot().len(), 2);
+    }
+
+    /// 探活失败的落地: UDP 心跳仍新鲜则以新证据为准保留, 纯 mDNS 节点移除
+    #[tokio::test]
+    async fn probe_failed_respects_fresh_udp() {
+        let (reg, mut rx) = test_registry("self");
+        // 双通道在线: 等价于"探测的 2s 窗口内 UDP 复活", 保留
+        reg.upsert(test_peer("aaa", "a"), PeerSource::Mdns);
+        reg.upsert(test_peer("aaa", "a"), PeerSource::Udp);
+        let _ = rx.try_recv();
+        reg.probe_failed("aaa", PEER_TIMEOUT);
+        assert_eq!(reg.snapshot().len(), 1);
+        assert!(rx.try_recv().is_err());
+
+        // 纯 mDNS: 探活失败即下线
+        reg.upsert(test_peer("ccc", "c"), PeerSource::Mdns);
+        let _ = rx.try_recv();
+        reg.probe_failed("ccc", PEER_TIMEOUT);
+        assert!(matches!(rx.try_recv(), Ok(PeerEvent::Down(fp)) if fp == "ccc"));
+        assert_eq!(reg.snapshot().len(), 1);
+    }
+
+    /// 端到端(真实 TCP): 监听在的节点探活后保留, 监听已消失的节点被移除
+    #[tokio::test]
+    async fn probe_keeps_live_and_removes_dead() {
+        let (reg, mut rx) = test_registry("self");
+
+        // 活节点: 真实监听中的端口
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let mut live = test_peer("aaa", "live");
+        live.addrs = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
+        live.port = listener.local_addr().unwrap().port();
+        reg.upsert(live.clone(), PeerSource::Mdns);
+
+        // 死节点: bind 拿到端口随即关闭(模拟进程崩溃后端口被 OS 回收)
+        let dead_port = {
+            let l = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let mut dead = test_peer("bbb", "dead");
+        dead.addrs = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
+        dead.port = dead_port;
+        reg.upsert(dead.clone(), PeerSource::Mdns);
+        while rx.try_recv().is_ok() {}
+
+        probe_peer(Arc::clone(&reg), live).await;
+        probe_peer(Arc::clone(&reg), dead).await;
+
+        assert!(matches!(rx.try_recv(), Ok(PeerEvent::Down(fp)) if fp == "bbb"));
+        let snapshot = reg.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].info.fingerprint, "aaa");
+        drop(listener);
     }
 }
