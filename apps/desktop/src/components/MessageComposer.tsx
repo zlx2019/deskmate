@@ -33,7 +33,8 @@ export function MessageComposer({
   const [text, setText] = useState("");
   const [targetFp, setTargetFp] = useState("");
   const [sending, setSending] = useState(false);
-  const [tip, setTip] = useState<string | null>(null);
+  // 提示条: 错误(发送失败/需要 PIN)与中性提示(截图发送中)分色呈现
+  const [tip, setTip] = useState<{ text: string; error: boolean } | null>(null);
   // 对方要求配对 PIN 时展开补填行
   const [pinInput, setPinInput] = useState<string | null>(null);
 
@@ -50,7 +51,7 @@ export function MessageComposer({
       const { pinRequired } = await api.sendText(target.fingerprint, content, pin);
       if (pinRequired) {
         setPinInput((prev) => prev ?? "");
-        setTip(getLocale().composer.pinRequired);
+        setTip({ text: getLocale().composer.pinRequired, error: true });
         return false;
       }
       if (pinInput?.trim()) onPinLearned(target.fingerprint, pinInput.trim());
@@ -59,7 +60,7 @@ export function MessageComposer({
       onSent(target.name, content);
       return true;
     } catch (e) {
-      setTip(String(e));
+      setTip({ text: String(e), error: true });
       return false;
     } finally {
       setSending(false);
@@ -97,14 +98,14 @@ export function MessageComposer({
       if (notifyResult) {
         api.notify(msg.notifyScreenshotSending, msg.notifyTo(peer.name)).catch(console.error);
       } else {
-        setTip(msg.screenshotSendingTip);
+        setTip({ text: msg.screenshotSendingTip, error: false });
         setTimeout(() => setTip(null), 2000);
       }
     } catch (e) {
       if (notifyResult) {
         api.notify(msg.notifyScreenshotFailed, String(e)).catch(console.error);
       } else {
-        setTip(String(e));
+        setTip({ text: String(e), error: true });
       }
     } finally {
       imageBusyRef.current = false;
@@ -174,8 +175,19 @@ export function MessageComposer({
             </option>
           ))}
         </select>
-        {tip && <span className="shrink-0 text-[11px] text-ember">{tip}</span>}
       </div>
+      {/* 提示条独立成行: 错误串可能很长(含地址/原因), 行内展示会挤爆设备选择行 */}
+      {tip && (
+        <div
+          className={`mt-2 rounded-md border px-2.5 py-1.5 text-[11px] leading-relaxed break-all ${
+            tip.error
+              ? "border-alert/30 bg-alert/10 text-alert"
+              : "border-line-2 bg-abyss/40 text-mist"
+          }`}
+        >
+          {tip.text}
+        </div>
+      )}
       {/* 对方启用配对 PIN 时的补填行 */}
       {pinInput !== null && (
         <input
