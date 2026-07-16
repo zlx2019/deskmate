@@ -95,3 +95,58 @@ async fn update_info_propagates_over_lan() {
     svc_a.shutdown().await;
     svc_b.shutdown().await;
 }
+
+/// 隐身热切换: 开启后对端立即看到下线(goodbye + mDNS 注销),
+/// 关闭后凭即时 announce 立刻复现(改造前两者都要重启才生效)
+#[tokio::test]
+async fn passive_toggle_propagates_over_lan() {
+    // 与另一用例并行跑, 换端口避免组播互扰(事件按指纹过滤是第二道保险)
+    let port = TEST_DISCOVERY_PORT + 1;
+    let (svc_a, _events_a) =
+        DiscoveryService::start(test_info("显形设备", "fp-cccc"), 40003, port, false)
+            .await
+            .expect("A 启动失败");
+    let (svc_b, mut events_b) =
+        DiscoveryService::start(test_info("观察者", "fp-dddd"), 40004, port, true)
+            .await
+            .expect("B 启动失败");
+
+    // 首步探测: 环境不支持组播回环时跳过整个用例
+    let Some(_) = wait_for(
+        &mut events_b,
+        |ev| matches!(ev, PeerEvent::Up(p) if p.info.fingerprint == "fp-cccc"),
+    )
+    .await
+    else {
+        eprintln!("跳过: 本环境不支持 UDP 组播回环, 无法进行发现层集成测试");
+        svc_a.shutdown().await;
+        svc_b.shutdown().await;
+        return;
+    };
+
+    // 开启隐身。与 update_info 同理, 刻意在无 tokio runtime 的 std 线程
+    // 里调用, 复现 Tauri 同步命令的真实上下文
+    std::thread::scope(|s| {
+        s.spawn(|| svc_a.set_passive(true));
+    });
+    wait_for(
+        &mut events_b,
+        |ev| matches!(ev, PeerEvent::Down(fp) if fp == "fp-cccc"),
+    )
+    .await
+    .expect("对端未看到隐身下线");
+
+    // 关闭隐身: 即时 announce 应让对端立刻重新看到本机
+    std::thread::scope(|s| {
+        s.spawn(|| svc_a.set_passive(false));
+    });
+    wait_for(
+        &mut events_b,
+        |ev| matches!(ev, PeerEvent::Up(p) if p.info.fingerprint == "fp-cccc"),
+    )
+    .await
+    .expect("对端未看到重新现身");
+
+    svc_a.shutdown().await;
+    svc_b.shutdown().await;
+}

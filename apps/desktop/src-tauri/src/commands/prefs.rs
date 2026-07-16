@@ -11,7 +11,7 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
     lock(&state.settings).clone()
 }
 
-/// 保存设置; 除端口与隐身模式(监听/广播启动时固定, 重启后生效)外均即时生效
+/// 保存设置; 除监听端口(socket 启动时固定, 重启后生效)外均即时生效
 #[tauri::command]
 pub fn save_settings(
     app: tauri::AppHandle,
@@ -70,6 +70,9 @@ pub fn save_settings(
     state
         .receiver
         .set_pin(settings.pin.clone().filter(|p| !p.is_empty()));
+    // 隐身模式热切换(开: goodbye + 注销 mDNS; 关: 重新广播并立即 announce;
+    // 值未变时为空操作)
+    state.discovery.set_passive(settings.passive);
     // 语言变化即时生效: 通知文案发送时实时取, 托盘菜单需重建
     let language_changed = lock(&state.settings).language != settings.language;
     *lock(&state.settings) = settings;

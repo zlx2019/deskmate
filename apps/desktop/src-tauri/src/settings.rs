@@ -1,6 +1,6 @@
 //! 应用设置: settings.json 持久化于数据目录
 //!
-//! 生效时机: 下载目录即时生效; 昵称与端口重启后生效(发现层广播信息启动时固定)。
+//! 生效时机: 仅监听端口重启后生效(socket 启动时固定), 其余各项即时生效。
 
 use std::path::{Path, PathBuf};
 
@@ -50,7 +50,7 @@ pub struct Settings {
     pub conflict_policy: ConflictPolicySetting,
     /// 头像: emoji 字符 / [`AVATAR_CUSTOM`](自定义图片) / None(首字母样式)
     pub avatar: Option<String>,
-    /// 隐身模式: 只看别人不被看见(不注册 mDNS、不发 announce; 重启后生效)
+    /// 隐身模式: 只看别人不被看见(不注册 mDNS、不发 announce; 保存即时生效)
     pub passive: bool,
     /// 开机自启(保存设置时即时写入系统)
     pub autostart: bool,
