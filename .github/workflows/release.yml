@@ -21,6 +21,9 @@ jobs:
   changelog:
     name: Changelog
     runs-on: ubuntu-latest
+    outputs:
+      # 暴露给 bundle job 的 tauri-action 透传（见下方 releaseBody 注释）
+      content: ${{ steps.cliff.outputs.content }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,6 +41,7 @@ jobs:
 
       # 依据 cliff.toml 生成本次发布的 Changelog
       - name: Generate changelog
+        id: cliff
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
@@ -124,7 +128,12 @@ jobs:
               echo "__APPLE_EOF__"
             } >> "$GITHUB_ENV"
           done
-      # 构建并把安装包上传到 tag 对应的 Release（beforeBuildCommand 由 Tauri.toml 提供）
+      # 构建并把安装包上传到 tag 对应的 Release（beforeBuildCommand 由 Tauri.toml 提供）。
+      # releaseBody 必须透传 changelog 内容：tauri-action 更新已存在的 Release 时会用
+      # releaseBody（未配置即空串）覆盖 body，v0.1.1 的 release 页曾被四个 bundle job
+      # 依次抹成空白；透传后四次覆盖写的都是同一份完整内容，幂等。
+      # （releaseName 未配置时按 undefined 处理、不参与覆盖，无需透传；
+      # draft/prerelease 在更新路径不被触碰 —— 均已核对 tauri-action@v1 源码。）
       - name: Build and upload bundles
         uses: tauri-apps/tauri-action@v1
         env:
@@ -132,4 +141,5 @@ jobs:
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
+          releaseBody: ${{ needs.changelog.outputs.content }}
           args: ${{ matrix.args }}
