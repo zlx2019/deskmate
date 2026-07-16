@@ -30,6 +30,14 @@ pub const PEER_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 /// 回收), 此超时兜底拔线/断电等无应答场景
 pub const PEER_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// 组播接收静默超时: 曾收到过组播报文却静默超过该时长, 判定本机 IGMP
+/// 成员关系疑似已随接口 down/up 丢失(内核不自动恢复), 触发 leave+join 重建
+///
+/// 活跃模式下自发 announce 的组播回环每个心跳周期([`HEARTBEAT_INTERVAL`])
+/// 必达, 静默即接收通路确凿故障, 故取值只需远大于心跳间隔、容忍偶发丢包;
+/// 隐身模式无自发回环, 全网无节点时会周期性空重建, 幂等且无害。
+pub const MULTICAST_SILENCE_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// 节点事件通道容量(满时丢弃, 消费方可用快照兜底)
 pub const EVENT_CHANNEL_CAP: usize = 64;
 

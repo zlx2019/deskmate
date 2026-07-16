@@ -6,6 +6,8 @@
 //!
 //! 任一通道可用即可工作, 两者都初始化失败才报错。
 //! 节点生命周期: 心跳 5s → 超时 15s 判定下线 → 退出时发 goodbye 报文。
+//! 组播成员关系由看门狗自愈: 睡眠唤醒(时钟停摆)与断网重连(接收静默)
+//! 都会令内核静默丢弃 IGMP membership, 检测到即 leave+join 重建。
 //! 发现报文只带小字段, 头像等大数据在 TCP 连接建立后按需拉取。
 
 use std::collections::HashMap;
@@ -22,7 +24,8 @@ use tokio::task::JoinHandle;
 use crate::protocol::PeerInfo;
 
 use crate::config::{
-    EVENT_CHANNEL_CAP, HEARTBEAT_INTERVAL, PEER_PROBE_INTERVAL, PEER_PROBE_TIMEOUT, PEER_TIMEOUT,
+    EVENT_CHANNEL_CAP, HEARTBEAT_INTERVAL, MULTICAST_SILENCE_TIMEOUT, PEER_PROBE_INTERVAL,
+    PEER_PROBE_TIMEOUT, PEER_TIMEOUT,
 };
 
 /// mDNS 服务类型
@@ -131,6 +134,23 @@ type SharedPackets = Arc<std::sync::RwLock<UdpPackets>>;
 /// 读报文组(毒锁直接恢复内部数据)
 fn read_packets(packets: &SharedPackets) -> std::sync::RwLockReadGuard<'_, UdpPackets> {
     packets.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// 组播接收脉搏: 最近一次收到组播来路报文(announce/goodbye)的时刻
+///
+/// 收包循环写入, 成员关系看门狗读取, 据此检测"曾收到过组播却静默
+/// 过久"的 membership 丢失。单播 response 不刷新脉搏 —— 它不经组播
+/// 通路, 成员关系丢失后依然可达, 计入会掩盖失聪。
+type MulticastPulse = Arc<Mutex<Option<Instant>>>;
+
+/// 刷新脉搏为当前时刻(毒锁直接恢复内部数据)
+fn mark_pulse(pulse: &MulticastPulse) {
+    *pulse.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+}
+
+/// 读脉搏(毒锁直接恢复内部数据)
+fn read_pulse(pulse: &MulticastPulse) -> Option<Instant> {
+    *pulse.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// 节点注册表: 聚合 mDNS 与 UDP 两个来源, 维护在线状态并分发事件
@@ -401,11 +421,14 @@ impl DiscoveryService {
         let packets: SharedPackets = Arc::new(std::sync::RwLock::new(UdpPackets::encode(
             &info, tcp_port, passive,
         )));
+        // 组播接收脉搏: 收包循环刷新, 成员关系看门狗据此判静默
+        let pulse: MulticastPulse = Arc::new(Mutex::new(None));
         let udp_target = (MULTICAST_GROUP, discovery_port);
         let udp = match start_udp(
             &info,
             discovery_port,
             Arc::clone(&packets),
+            Arc::clone(&pulse),
             &registry,
             &mut tasks,
         )
@@ -437,12 +460,13 @@ impl DiscoveryService {
             }
         }));
 
-        // 睡眠唤醒自愈任务(UDP 通道可用时)
+        // 组播成员关系自愈任务(UDP 通道可用时): 睡眠唤醒 + 断网重连
         if let Some(socket) = &udp {
-            tasks.push(tokio::spawn(sleep_watchdog(
+            tasks.push(tokio::spawn(membership_watchdog(
                 Arc::clone(socket),
                 udp_target,
                 Arc::clone(&packets),
+                pulse,
             )));
         }
 
@@ -652,22 +676,63 @@ async fn probe_peer(registry: Arc<Registry>, mdns: Option<mdns_sd::ServiceDaemon
     }
 }
 
-/// 睡眠唤醒自愈: 检测系统睡眠恢复后重新加入组播组并立即宣告
+/// 判定组播接收是否已静默超阈值
 ///
-/// 系统睡眠会静默丢失 IGMP 组播成员关系 —— 唤醒后本机收不到别人的
-/// announce、别人也发现不了本机, 发现层就此失灵且无任何报错。
-/// 检测依据: 睡眠期间单调钟(Instant)停摆而墙钟(SystemTime)照走,
-/// 两者前进量之差即"停摆时长", 超过阈值判定睡过。
-/// (mDNS daemon 自带网络接口监控, 唤醒自愈交由其内部处理;
-/// Windows 的单调钟计入睡眠时间, 检测不到时靠心跳超时自然收敛。)
-async fn sleep_watchdog(udp: Arc<UdpSocket>, target: (Ipv4Addr, u16), packets: SharedPackets) {
+/// "从未收到过"不算静默: 独机启动或隐身且全网无节点时无从谈"恢复",
+/// 也避免刚启动即触发无谓重建。
+fn multicast_silent(last_seen: Option<Instant>, threshold: Duration) -> bool {
+    last_seen.is_some_and(|t| t.elapsed() >= threshold)
+}
+
+/// 重建组播成员关系并立即宣告(passive 模式报文为空不发)
+///
+/// 先退再进: socket 仍持有旧成员状态时重复 join 会报错; leave 失败
+/// 属预期(成员关系可能已随接口一起丢失), 忽略。宣告除了加速对端
+/// 看到本机, 其组播回环也是重建是否生效的即时验证 —— 生效则脉搏
+/// 随即刷新, 看门狗下轮收敛。
+async fn rejoin_multicast(udp: &UdpSocket, target: (Ipv4Addr, u16), packets: &SharedPackets) {
+    let _ = udp.leave_multicast_v4(target.0, Ipv4Addr::UNSPECIFIED);
+    if let Err(e) = udp.join_multicast_v4(target.0, Ipv4Addr::UNSPECIFIED) {
+        tracing::warn!("重新加入组播组失败(下轮重试): {e}");
+        return;
+    }
+    let announce = read_packets(packets).announce.clone();
+    if !announce.is_empty() {
+        let _ = udp.send_to(&announce, target).await;
+    }
+}
+
+/// 组播成员关系自愈看门狗: 检测两类静默失联并 leave+join 重建
+///
+/// IGMP 成员关系会被系统静默清掉且内核不自动恢复, 此后本机收不到
+/// 任何组播(自发回环也停), 发现层半聋且无任何报错:
+///
+/// 1. **系统睡眠**: 检测依据是睡眠期间单调钟(Instant)停摆而墙钟
+///    (SystemTime)照走, 两者前进量之差即"停摆时长", 超阈值判定睡过
+///    (NTP 校时偏移远小于阈值, 不会误报; Windows 单调钟计入睡眠
+///    时间, 此路检不到, 由第 2 路兜底)。
+/// 2. **断网重连**: 接口 down 时内核清掉成员关系, 时钟不停摆, 第 1 路
+///    抓不到。检测依据是组播接收脉搏 —— 曾收到过组播却静默超过
+///    [`MULTICAST_SILENCE_TIMEOUT`] 即判接收通路故障, 每轮重试重建
+///    直到组播恢复流入(接口仍 down 时 join 会失败, 单次重建不够)。
+///
+/// (mDNS daemon 自带网络接口监控, 其自愈交由内部处理。)
+async fn membership_watchdog(
+    udp: Arc<UdpSocket>,
+    target: (Ipv4Addr, u16),
+    packets: SharedPackets,
+    pulse: MulticastPulse,
+) {
     /// 检测周期
     const TICK: Duration = Duration::from_secs(30);
-    /// 停摆超过该时长判定为睡眠恢复(NTP 校时的偏移远小于此, 不会误报)
+    /// 停摆超过该时长判定为睡眠恢复
     const STALL_JUMP: Duration = Duration::from_secs(60);
     let mut wall = std::time::SystemTime::now();
     let mut mono = Instant::now();
     let mut tick = tokio::time::interval(TICK);
+    // 静默期内首轮 info、重试降 debug, 恢复时 info 收尾, 避免隐身且
+    // 全网无节点的场景(静默无法自证恢复)刷屏
+    let mut silence_logged = false;
     loop {
         tick.tick().await;
         let wall_gap = std::time::SystemTime::now()
@@ -677,24 +742,25 @@ async fn sleep_watchdog(udp: Arc<UdpSocket>, target: (Ipv4Addr, u16), packets: S
         wall = std::time::SystemTime::now();
         mono = Instant::now();
         let stalled = wall_gap.saturating_sub(mono_gap);
-        if stalled < STALL_JUMP {
+        let silent = multicast_silent(read_pulse(&pulse), MULTICAST_SILENCE_TIMEOUT);
+        if stalled >= STALL_JUMP {
+            tracing::info!(
+                stalled_secs = stalled.as_secs(),
+                "检测到系统睡眠恢复, 重建组播成员关系"
+            );
+        } else if silent && !silence_logged {
+            silence_logged = true;
+            tracing::info!("组播接收静默超阈值(疑似断网后成员关系丢失), 重建组播成员关系");
+        } else if silent {
+            tracing::debug!("组播接收仍静默, 重试重建成员关系");
+        } else {
+            if silence_logged {
+                silence_logged = false;
+                tracing::info!("组播接收已恢复");
+            }
             continue;
         }
-        tracing::info!(
-            stalled_secs = stalled.as_secs(),
-            "检测到系统睡眠恢复, 重建组播成员关系"
-        );
-        // 先退再进: socket 仍持有旧成员状态时重复 join 会报错
-        let _ = udp.leave_multicast_v4(target.0, Ipv4Addr::UNSPECIFIED);
-        if let Err(e) = udp.join_multicast_v4(target.0, Ipv4Addr::UNSPECIFIED) {
-            tracing::warn!("重新加入组播组失败(等待下轮重试): {e}");
-            continue;
-        }
-        // 立即宣告一次, 让对端第一时间看到本机(passive 模式报文为空不发)
-        let announce = read_packets(&packets).announce.clone();
-        if !announce.is_empty() {
-            let _ = udp.send_to(&announce, target).await;
-        }
+        rejoin_multicast(&udp, target, &packets).await;
     }
 }
 
@@ -841,11 +907,13 @@ fn bind_multicast_socket(discovery_port: u16) -> std::io::Result<UdpSocket> {
 /// 初始化 UDP 组播: 加入组播组, 启动心跳与收包任务
 ///
 /// 报文经共享组读取(身份热更新即时生效); passive 模式下报文组为空,
-/// 心跳与应答自然静默(只收不发)。
+/// 心跳与应答自然静默(只收不发)。收包侧在组播来路报文上刷新接收
+/// 脉搏, 供成员关系看门狗判静默。
 async fn start_udp(
     info: &PeerInfo,
     discovery_port: u16,
     packets: SharedPackets,
+    pulse: MulticastPulse,
     registry: &Arc<Registry>,
     tasks: &mut Vec<JoinHandle<()>>,
 ) -> Result<Arc<UdpSocket>, DiscoveryError> {
@@ -876,6 +944,13 @@ async fn start_udp(
                     let Ok(packet) = serde_json::from_slice::<AnnouncePacket>(&buf[..n]) else {
                         continue;
                     };
+                    // 组播接收脉搏: announce/goodbye 只经组播送达, 收到即证明
+                    // 成员关系存活(单播 response 不算); 含自发 announce 的回环
+                    // —— 活跃模式下每个心跳周期必达, 是接收通路的金丝雀,
+                    // 故在自见过滤之前记录
+                    if packet.kind != AnnounceKind::Response {
+                        mark_pulse(&pulse);
+                    }
                     if packet.info.fingerprint == self_fp {
                         continue;
                     }
@@ -1216,5 +1291,35 @@ mod tests {
         assert!(rx.try_recv().is_err());
         assert_eq!(reg.snapshot().len(), 1);
         let _ = daemon.shutdown();
+    }
+
+    /// 从未收到过组播不算静默: 独机启动/隐身且全网无节点不应触发重建
+    #[test]
+    fn multicast_silent_requires_prior_reception() {
+        assert!(!multicast_silent(None, Duration::ZERO));
+    }
+
+    /// 脉搏新鲜(未达阈值)不算静默
+    #[test]
+    fn multicast_silent_fresh_pulse_is_not_silent() {
+        assert!(!multicast_silent(
+            Some(Instant::now()),
+            Duration::from_secs(3600)
+        ));
+    }
+
+    /// 收到过组播且超过阈值即判静默(零阈值下任意流逝都触发)
+    #[test]
+    fn multicast_silent_after_threshold() {
+        assert!(multicast_silent(Some(Instant::now()), Duration::ZERO));
+    }
+
+    /// 脉搏初始为空, 标记后可读到时刻
+    #[test]
+    fn pulse_mark_roundtrip() {
+        let pulse: MulticastPulse = Arc::new(Mutex::new(None));
+        assert!(read_pulse(&pulse).is_none());
+        mark_pulse(&pulse);
+        assert!(read_pulse(&pulse).is_some());
     }
 }
