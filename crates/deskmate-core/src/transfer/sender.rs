@@ -161,6 +161,7 @@ async fn negotiate_offer(
         accepted_files,
         reason,
         pin_required,
+        reason_code,
         ..
     } = resp
     else {
@@ -170,7 +171,10 @@ async fn negotiate_offer(
         return Err(TransferError::PinRequired);
     }
     if accepted_files.is_empty() {
-        return Err(TransferError::Rejected { reason });
+        return Err(TransferError::Rejected {
+            reason,
+            reason_code,
+        });
     }
     Ok(accepted_files.into_iter().collect())
 }
@@ -327,6 +331,8 @@ async fn run_data_phase(
             sink.notify(TransferEvent::Interrupted {
                 transfer_id: transfer_id.clone(),
                 reason: e.to_string(),
+                code: e.code(),
+                detail: e.detail(),
             })
             .await;
         }

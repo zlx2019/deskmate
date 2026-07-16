@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { EVENTS } from "../events";
-import { getLocale } from "../i18n";
+import { formatErrorCode, getLocale } from "../i18n";
 import {
   avatarBlobUrl,
   avatarHashOf,
@@ -135,7 +135,13 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
       break;
     case "interrupted":
       speedSamples.delete(ev.transferId);
-      next = { ...prev, status: "interrupted", speed: 0, reason: ev.reason };
+      next = {
+        ...prev,
+        status: "interrupted",
+        speed: 0,
+        // 按错误码取本机语言文案, 未收录的码回退引擎原始串
+        reason: formatErrorCode(ev.code, ev.detail, ev.reason),
+      };
       break;
     case "rejected":
       speedSamples.delete(ev.transferId);
@@ -143,7 +149,12 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
         ...prev,
         status: "rejected",
         speed: 0,
-        reason: ev.reason ?? getLocale().transfer.rejectedDefault,
+        // 结构化拒因(1.4+ 对端)按本机语言渲染; 旧对端回退其原文
+        reason: formatErrorCode(
+          ev.reasonCode,
+          null,
+          ev.reason ?? getLocale().transfer.rejectedDefault,
+        ),
         pinRequired: ev.pinRequired,
       };
       break;

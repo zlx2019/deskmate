@@ -6,6 +6,7 @@ use deskmate_core::transfer::{ConflictPolicy, ControlState, OfferDecision, sanit
 use serde::Serialize;
 use tauri::State;
 
+use super::ErrDto;
 use crate::state::{AppState, lock};
 
 /// 应答接收请求: accept=true 整单接受(可另选保存目录), false 拒绝
@@ -19,10 +20,10 @@ pub fn respond_offer(
     accept: bool,
     save_dir: Option<String>,
     overwrite: bool,
-) -> Result<(), String> {
+) -> Result<(), ErrDto> {
     let pending = lock(&state.offers)
         .remove(&offer_id)
-        .ok_or_else(|| "该请求已过期或已处理".to_string())?;
+        .ok_or_else(|| ErrDto::new("offer_expired"))?;
     let decision = if accept {
         OfferDecision::Accept {
             accepted_files: pending.file_ids,
@@ -41,7 +42,7 @@ pub fn respond_offer(
     pending
         .reply
         .send(decision)
-        .map_err(|_| "会话已断开".to_string())
+        .map_err(|_| ErrDto::new("session_gone"))
 }
 
 /// 接收预检结果

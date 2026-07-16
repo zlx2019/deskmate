@@ -138,11 +138,14 @@ pub enum ControlMessage {
         transfer_id: String,
         /// 接受的文件序号列表(支持部分接受)
         accepted_files: Vec<u32>,
-        /// 拒绝原因(可选)
+        /// 拒绝原因(接收方语言的展示文本, 兼容旧版本的兜底)
         reason: Option<String>,
         /// 拒因是 PIN 缺失或错误(发送端据此弹 PIN 输入重试)
         #[serde(default)]
         pin_required: bool,
+        /// 结构化拒因码(协议 1.4 起; 发送端按本机语言渲染, 旧对端缺省)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason_code: Option<String>,
     },
     /// 文本消息: 逐字节一致送达, 不 trim、不转义
     Text {
@@ -339,6 +342,31 @@ mod tests {
                 serde_json::to_string(msg).unwrap()
             );
         }
+    }
+
+    /// 旧版本(无 reason_code 字段)的传输应答必须能解析;
+    /// 未设置时不得序列化(1.4 新增字段的向后兼容护栏)
+    #[test]
+    fn transfer_response_reason_code_is_backward_compatible() {
+        let legacy = r#"{"type":"transfer_response","transfer_id":"t","accepted_files":[],"reason":"busy","pin_required":false}"#;
+        let msg: ControlMessage = serde_json::from_str(legacy).unwrap();
+        let ControlMessage::TransferResponse { reason_code, .. } = msg else {
+            panic!("expected transfer_response");
+        };
+        assert_eq!(reason_code, None);
+
+        let modern = ControlMessage::TransferResponse {
+            transfer_id: "t".into(),
+            accepted_files: Vec::new(),
+            reason: None,
+            pin_required: false,
+            reason_code: None,
+        };
+        assert!(
+            !serde_json::to_string(&modern)
+                .unwrap()
+                .contains("reason_code")
+        );
     }
 
     /// 旧版本(无 avatar/os_version 字段)的设备信息必须能解析;

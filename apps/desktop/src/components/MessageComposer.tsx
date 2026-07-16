@@ -7,7 +7,7 @@ import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../api";
 import { readClipboardImagePng, screenshotName } from "../clipboard";
 import { EVENTS } from "../events";
-import { getLocale, useI18n } from "../i18n";
+import { formatError, getLocale, useI18n } from "../i18n";
 import { type PeerDto } from "../types";
 
 /** 聊天输入行: 设备下拉 + 文本框(Enter 发送 / Shift+Enter 换行)+ PIN 补填 */
@@ -60,7 +60,7 @@ export function MessageComposer({
       onSent(target.name, content);
       return true;
     } catch (e) {
-      setTip({ text: String(e), error: true });
+      setTip({ text: formatError(e), error: true });
       return false;
     } finally {
       setSending(false);
@@ -103,9 +103,9 @@ export function MessageComposer({
       }
     } catch (e) {
       if (notifyResult) {
-        api.notify(msg.notifyScreenshotFailed, String(e)).catch(console.error);
+        api.notify(msg.notifyScreenshotFailed, formatError(e)).catch(console.error);
       } else {
-        setTip({ text: String(e), error: true });
+        setTip({ text: formatError(e), error: true });
       }
     } finally {
       imageBusyRef.current = false;
