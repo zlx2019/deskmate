@@ -20,7 +20,8 @@ pub const PEER_TIMEOUT: Duration = Duration::from_secs(15);
 /// 崩溃节点探活间隔: "仅 mDNS 在线且 UDP 静默"的节点每隔该时长 TCP 探测一次
 ///
 /// 这类节点无法靠时间判死(mDNS 无周期心跳, 崩溃节点要等 SRV TTL ≈2min
-/// 过期), 探活把意外下线感知压到本间隔量级。取值边界: 不低于
+/// 过期)。探活失败触发 mDNS 缓存验证(verify, 10s), 整体感知
+/// ≈ 本间隔 + 验证时长 ≈ 40s。取值边界: 不低于
 /// [`PEER_TIMEOUT`](15s, mDNS-only 属降级环境, 判死不该比主通道激进),
 /// 远小于 mDNS TTL(120s, 否则等 TTL 即可)。
 pub const PEER_PROBE_INTERVAL: Duration = Duration::from_secs(30);
