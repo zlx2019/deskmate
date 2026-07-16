@@ -168,17 +168,24 @@ pub enum TransferEventDto {
     Completed { transfer_id: String },
     /// 任务取消(临时文件已删)
     Cancelled { transfer_id: String },
-    /// 意外中断(.part 保留)
-    Interrupted { transfer_id: String, reason: String },
+    /// 意外中断(.part 保留); code/detail 供前端按语言渲染, reason 为兜底串
+    Interrupted {
+        transfer_id: String,
+        reason: String,
+        code: String,
+        detail: Option<String>,
+    },
     /// 对端暂停了传输(本端操作由前端乐观更新, 不经此事件)
     Paused { transfer_id: String },
     /// 对端恢复了传输
     Resumed { transfer_id: String },
-    /// 对端拒绝(发送侧); pin_required 表示拒因是缺少或错误的配对 PIN
+    /// 对端拒绝(发送侧); pin_required 表示拒因是缺少或错误的配对 PIN;
+    /// reason_code 为结构化拒因(1.4+ 对端), reason 为对端语言的兜底文本
     Rejected {
         transfer_id: String,
         reason: Option<String>,
         pin_required: bool,
+        reason_code: Option<String>,
     },
     /// 收到文本
     TextReceived {
@@ -219,9 +226,13 @@ impl From<TransferEvent> for TransferEventDto {
             TransferEvent::Interrupted {
                 transfer_id,
                 reason,
+                code,
+                detail,
             } => Self::Interrupted {
                 transfer_id,
                 reason,
+                code: code.to_string(),
+                detail,
             },
             TransferEvent::Paused { transfer_id } => Self::Paused { transfer_id },
             TransferEvent::Resumed { transfer_id } => Self::Resumed { transfer_id },

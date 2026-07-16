@@ -23,6 +23,50 @@ export const zh = {
     dragToTarget: "拖到目标设备上发送",
   },
 
+  /** 后端错误码 → 文案(键与 Rust 侧 code 一一对应, 细节参数由调用方拼接) */
+  errors: {
+    // 引擎传输错误(TransferError)
+    io: "网络或磁盘读写出错",
+    protocol: "协议错误",
+    tls: "加密连接失败",
+    peer_mismatch: "对方身份校验不通过",
+    invalid_path: "文件路径不安全",
+    source_not_found: "源文件不存在或不可读",
+    rejected: "对方拒绝",
+    hash_mismatch: "文件校验失败",
+    cancelled: "已取消",
+    timeout: "等待超时",
+    bad_file_id: "协议错误(非法文件序号)",
+    unknown_transfer: "任务不存在或已结束",
+    duplicate_data_session: "任务已有进行中的连接",
+    resume_unavailable: "无法续传",
+    resume_offset_mismatch: "续传断点不一致",
+    avatar_too_large: "图片超出大小上限",
+    pin_required: "对方要求配对 PIN",
+    // 对端结构化拒因(协议 1.4 reason_code)
+    declined: "对方拒绝了本次传输",
+    decision_timeout: "对方长时间未响应",
+    duplicate_task: "对方已有同 ID 任务在进行",
+    no_valid_files: "未选择任何有效文件",
+    receiver_unavailable: "对方暂时无法接收",
+    bad_transfer_id: "任务 ID 非法",
+    // 命令层
+    peer_offline: "对方设备已离线",
+    no_files_selected: "未选择任何文件",
+    screenshot_empty: "截图数据为空",
+    screenshot_stage_missing: "截图暂存已失效, 请重新截图",
+    retry_unavailable: "该任务无法重试(缺少原始参数)",
+    offer_expired: "该请求已过期或已处理",
+    session_gone: "会话已断开",
+    download_dir_unavailable: "下载目录不可用",
+    settings_save_failed: "保存设置失败",
+    identity_update_failed: "更新身份失败",
+    hotkey_invalid: "快捷键格式无效",
+    hotkey_conflict: "快捷键注册失败(可能与其他应用冲突)",
+    avatar_empty: "图片数据为空",
+    internal: "内部错误",
+  },
+
   /** 传输面板(状态 / 卡片 / 文字消息区) */
   transfer: {
     status: {

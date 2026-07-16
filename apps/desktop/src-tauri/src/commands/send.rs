@@ -9,6 +9,7 @@ use serde::Serialize;
 use tauri::State;
 use tokio::sync::watch;
 
+use super::ErrDto;
 use crate::bridge::{TransferEventDto, emit_transfer_event};
 use crate::state::{AppState, InterruptedMap, InterruptedSend, lock};
 
@@ -23,9 +24,9 @@ pub async fn send_files_to(
     fingerprint: String,
     paths: Vec<String>,
     pin: Option<String>,
-) -> Result<String, String> {
+) -> Result<String, ErrDto> {
     if paths.is_empty() {
-        return Err("未选择任何文件".to_string());
+        return Err(ErrDto::new("no_files_selected"));
     }
     let transfer_id = uuid::Uuid::new_v4().to_string();
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
@@ -46,17 +47,17 @@ pub async fn send_files_to(
 /// 这里以 invoke 的原始载荷接收, 落入暂存目录后返回暂存 ID,
 /// 前端随后调 send_clipboard_image 关联目标设备发出。
 #[tauri::command]
-pub fn stage_clipboard_image(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+pub fn stage_clipboard_image(request: tauri::ipc::Request<'_>) -> Result<String, ErrDto> {
     let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
-        return Err("暂存接口只接受二进制载荷".to_string());
+        return Err(ErrDto::with("internal", "raw body expected"));
     };
     if data.is_empty() {
-        return Err("截图数据为空".to_string());
+        return Err(ErrDto::new("screenshot_empty"));
     }
     let staged_id = uuid::Uuid::new_v4().to_string();
     let dir = std::env::temp_dir().join("deskmate-staging");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建暂存目录失败: {e}"))?;
-    std::fs::write(dir.join(&staged_id), data).map_err(|e| format!("写入暂存截图失败: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| ErrDto::with("io", e))?;
+    std::fs::write(dir.join(&staged_id), data).map_err(|e| ErrDto::with("io", e))?;
     Ok(staged_id)
 }
 
@@ -75,7 +76,7 @@ pub async fn send_clipboard_image(
     file_name: String,
     staged: String,
     pin: Option<String>,
-) -> Result<String, String> {
+) -> Result<String, ErrDto> {
     // 文件名由前端生成(screenshot-时间戳.png), 白名单校验防路径注入
     let legal_name = !file_name.is_empty()
         && !file_name.contains("..")
@@ -83,21 +84,22 @@ pub async fn send_clipboard_image(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
     if !legal_name {
-        return Err("非法的截图文件名".to_string());
+        return Err(ErrDto::with("internal", "bad screenshot file name"));
     }
     // 暂存 ID 应为 stage_clipboard_image 返回的 UUID, 同样校验防注入
     if staged.is_empty() || !staged.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        return Err("非法的暂存 ID".to_string());
+        return Err(ErrDto::with("internal", "bad staged id"));
     }
     let staged_path = std::env::temp_dir().join("deskmate-staging").join(&staged);
     let transfer_id = uuid::Uuid::new_v4().to_string();
     let task_dir = std::env::temp_dir()
         .join("deskmate-screenshots")
         .join(&transfer_id);
-    std::fs::create_dir_all(&task_dir).map_err(|e| format!("创建截图任务目录失败: {e}"))?;
+    std::fs::create_dir_all(&task_dir).map_err(|e| ErrDto::with("io", e))?;
     let path = task_dir.join(&file_name);
     // 同卷 rename 原子且零拷贝, 暂存文件随之消失
-    std::fs::rename(&staged_path, &path).map_err(|e| format!("暂存截图不存在或不可用: {e}"))?;
+    std::fs::rename(&staged_path, &path)
+        .map_err(|e| ErrDto::with("screenshot_stage_missing", e))?;
 
     spawn_transfer_task(
         &app,
@@ -117,8 +119,8 @@ pub async fn retry_send_transfer(
     state: State<'_, AppState>,
     transfer_id: String,
     pin: Option<String>,
-) -> Result<(), String> {
-    let (fingerprint, paths) = interrupted_params(&state, &transfer_id, "重试")?;
+) -> Result<(), ErrDto> {
+    let (fingerprint, paths) = interrupted_params(&state, &transfer_id, "retry_unavailable")?;
     spawn_transfer_task(
         &app,
         &state,
@@ -135,8 +137,8 @@ pub async fn resume_send_transfer(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     transfer_id: String,
-) -> Result<(), String> {
-    let (fingerprint, paths) = interrupted_params(&state, &transfer_id, "续传")?;
+) -> Result<(), ErrDto> {
+    let (fingerprint, paths) = interrupted_params(&state, &transfer_id, "resume_unavailable")?;
     spawn_transfer_task(
         &app,
         &state,
@@ -164,7 +166,7 @@ pub async fn send_text_to(
     fingerprint: String,
     text: String,
     pin: Option<String>,
-) -> Result<SendTextOutcome, String> {
+) -> Result<SendTextOutcome, ErrDto> {
     let peer = find_peer(&state, &fingerprint)?;
     let identity = crate::state::current_identity(&state);
     match send_text(
@@ -181,7 +183,7 @@ pub async fn send_text_to(
             pin_required: false,
         }),
         Err(TransferError::PinRequired) => Ok(SendTextOutcome { pin_required: true }),
-        Err(other) => Err(format!("发送失败: {other}")),
+        Err(other) => Err(ErrDto::from(&other)),
     }
 }
 
@@ -196,16 +198,16 @@ enum SendMode {
     Resume,
 }
 
-/// 从中断登记表取回任务的原始参数; 无登记时给出场景化错误
+/// 从中断登记表取回任务的原始参数; 无登记时按调用场景返回对应错误码
 fn interrupted_params(
     state: &State<'_, AppState>,
     transfer_id: &str,
-    action: &str,
-) -> Result<(String, Vec<PathBuf>), String> {
+    missing_code: &'static str,
+) -> Result<(String, Vec<PathBuf>), ErrDto> {
     let guard = lock(&state.interrupted_sends);
     let item = guard
         .get(transfer_id)
-        .ok_or_else(|| format!("该任务不可{action}(缺少原始参数)"))?;
+        .ok_or_else(|| ErrDto::new(missing_code))?;
     Ok((item.fingerprint.clone(), item.paths.clone()))
 }
 
@@ -217,7 +219,7 @@ fn spawn_transfer_task(
     fingerprint: String,
     paths: Vec<PathBuf>,
     mode: SendMode,
-) -> Result<(), String> {
+) -> Result<(), ErrDto> {
     let peer = find_peer(state, &fingerprint)?;
 
     // 预注册控制通道, 前端可立即对该任务暂停/取消
@@ -285,7 +287,10 @@ fn settle_send_result(
         }
         Err(e) => {
             match e {
-                TransferError::Rejected { reason } => {
+                TransferError::Rejected {
+                    reason,
+                    reason_code,
+                } => {
                     crate::bridge::notify_if_unfocused(
                         app,
                         "deskmate",
@@ -297,6 +302,7 @@ fn settle_send_result(
                             transfer_id: transfer_id.to_string(),
                             reason: reason.clone(),
                             pin_required: false,
+                            reason_code: reason_code.clone(),
                         },
                     );
                 }
@@ -305,8 +311,9 @@ fn settle_send_result(
                         app,
                         TransferEventDto::Rejected {
                             transfer_id: transfer_id.to_string(),
-                            reason: Some("对方要求配对 PIN".to_string()),
+                            reason: None,
                             pin_required: true,
+                            reason_code: Some("pin_required".to_string()),
                         },
                     );
                 }
@@ -316,6 +323,8 @@ fn settle_send_result(
                         TransferEventDto::Interrupted {
                             transfer_id: transfer_id.to_string(),
                             reason: e.to_string(),
+                            code: e.code().to_string(),
+                            detail: e.detail(),
                         },
                     );
                 }
@@ -336,9 +345,9 @@ fn settle_send_result(
 }
 
 /// 按指纹查找在线节点
-fn find_peer(state: &State<'_, AppState>, fingerprint: &str) -> Result<Peer, String> {
+fn find_peer(state: &State<'_, AppState>, fingerprint: &str) -> Result<Peer, ErrDto> {
     state
         .discovery
         .peer_by_fingerprint(fingerprint)
-        .ok_or_else(|| "节点已离线".to_string())
+        .ok_or_else(|| ErrDto::new("peer_offline"))
 }

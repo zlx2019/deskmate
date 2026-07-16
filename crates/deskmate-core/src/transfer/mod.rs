@@ -61,8 +61,10 @@ pub enum TransferError {
     /// 对端拒绝了传输请求
     #[error("对端拒绝: {}", reason.as_deref().unwrap_or("未给出原因"))]
     Rejected {
-        /// 拒绝原因
+        /// 拒绝原因(对端语言的展示文本)
         reason: Option<String>,
+        /// 结构化拒因(协议 1.4 起, 供 UI 按本机语言渲染; 旧对端为 None)
+        reason_code: Option<String>,
     },
     /// 文件完整性校验失败
     #[error("文件校验失败: {rel_path}")]
@@ -105,6 +107,54 @@ pub enum TransferError {
     /// 对端启用了配对 PIN, 本次请求未提供或不正确
     #[error("对端要求配对 PIN")]
     PinRequired,
+}
+
+impl TransferError {
+    /// 稳定错误码: 跨语言 UI 按码查本地化文案(Display 的中文面向日志与 CLI)
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Io(_) => "io",
+            Self::Protocol(_) => "protocol",
+            Self::Tls(_) => "tls",
+            Self::PeerMismatch => "peer_mismatch",
+            Self::InvalidPath { .. } => "invalid_path",
+            Self::SourceNotFound(_) => "source_not_found",
+            Self::Rejected { .. } => "rejected",
+            Self::HashMismatch { .. } => "hash_mismatch",
+            Self::Cancelled => "cancelled",
+            Self::Timeout(_) => "timeout",
+            Self::BadFileId(_) => "bad_file_id",
+            Self::UnknownTransfer(_) => "unknown_transfer",
+            Self::DuplicateDataSession(_) => "duplicate_data_session",
+            Self::ResumeUnavailable(_) => "resume_unavailable",
+            Self::ResumeOffsetMismatch { .. } => "resume_offset_mismatch",
+            Self::AvatarTooLarge { .. } => "avatar_too_large",
+            Self::PinRequired => "pin_required",
+        }
+    }
+
+    /// 关键细节参数(可选): 附在本地化主句之后展示, 内容不做翻译
+    /// (底层 IO/协议错误跟随其来源语言, 路径与数字则语言无关)
+    pub fn detail(&self) -> Option<String> {
+        match self {
+            Self::Io(e) => Some(e.to_string()),
+            Self::Protocol(e) => Some(e.to_string()),
+            Self::Tls(e) => Some(e.to_string()),
+            Self::InvalidPath { path } => Some(path.clone()),
+            Self::SourceNotFound(p) => Some(p.display().to_string()),
+            Self::Rejected { reason, .. } => reason.clone(),
+            Self::HashMismatch { rel_path } => Some(rel_path.clone()),
+            Self::Timeout(scene) => Some((*scene).to_string()),
+            Self::BadFileId(id) => Some(id.to_string()),
+            Self::UnknownTransfer(id) | Self::DuplicateDataSession(id) => Some(id.clone()),
+            Self::ResumeUnavailable(why) => Some(why.clone()),
+            Self::ResumeOffsetMismatch { offset, part_len } => {
+                Some(format!("{offset} != {part_len}"))
+            }
+            Self::AvatarTooLarge { size } => Some(size.to_string()),
+            Self::PeerMismatch | Self::Cancelled | Self::PinRequired => None,
+        }
+    }
 }
 
 /// 同名冲突处理策略(接收端落盘时生效)
@@ -174,8 +224,12 @@ pub enum TransferEvent {
     Interrupted {
         /// 传输任务 ID
         transfer_id: String,
-        /// 中断原因
+        /// 中断原因(本机语言的展示串, 日志与 CLI 用)
         reason: String,
+        /// 稳定错误码(UI 按码查本地化文案)
+        code: &'static str,
+        /// 错误细节参数(不译, 附加展示)
+        detail: Option<String>,
     },
     /// 对端暂停了传输(本端操作由 UI 乐观更新, 不经此事件)
     Paused {
