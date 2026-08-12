@@ -25,8 +25,9 @@ pub mod transfer;
 /// `PeerInfo::os_version`, and 1.4 added bidirectional Pause/Resume/Cancel pushes
 /// plus the optional structured `TransferResponse::reason_code`. The control
 /// frames existed in 1.0, so older versions can respond but do not initiate them.
+/// 1.5 added the optional `FileMeta::inline_image` clipboard-image marker.
 /// Minor-version evolution remains backward compatible.
-pub const PROTOCOL_VERSION: &str = "1.4";
+pub const PROTOCOL_VERSION: &str = "1.5";
 
 /// Default TCP listening port shared by control and data channels and configurable in settings.
 pub const DEFAULT_TCP_PORT: u16 = 42424;

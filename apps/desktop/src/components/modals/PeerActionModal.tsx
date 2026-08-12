@@ -26,6 +26,7 @@ export function PeerActionModal({
   onSendFiles,
   onSendImage,
   onTextSent,
+  onImageSent,
   onClose,
 }: {
   peer: PeerDto;
@@ -39,6 +40,8 @@ export function PeerActionModal({
   onSendImage: (peer: PeerDto, fileName: string, bytes: Uint8Array) => Promise<void>;
   /** Records successfully sent text in the message stream. */
   onTextSent: (peerName: string, text: string) => void;
+  /** Records a successfully sent clipboard image as an outgoing chat bubble. */
+  onImageSent: (peerName: string, name: string, bytes: Uint8Array) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -126,6 +129,8 @@ export function PeerActionModal({
       const image = await readClipboardImagePng();
       if (image) {
         await onSendImage(peer, image.name, image.bytes);
+        // Mirror the outgoing image into the chat stream like sent text.
+        onImageSent(peer.name, image.name, image.bytes);
         // Screenshots appear as file tasks in the right panel, so close the dialog.
         onClose();
         return;

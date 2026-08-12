@@ -161,11 +161,13 @@ pub enum TransferEventDto {
         done: u64,
         size: u64,
     },
-    /// One file completed.
+    /// One file completed. inline_image marks a received clipboard image the
+    /// frontend also shows in the message stream.
     FileCompleted {
         transfer_id: String,
         file_id: u32,
         path: String,
+        inline_image: bool,
     },
     /// Transfer completed.
     Completed { transfer_id: String },
@@ -224,10 +226,12 @@ impl From<TransferEvent> for TransferEventDto {
                 transfer_id,
                 file_id,
                 path,
+                inline_image,
             } => Self::FileCompleted {
                 transfer_id,
                 file_id,
                 path: path.display().to_string(),
+                inline_image,
             },
             TransferEvent::Completed { transfer_id } => Self::Completed { transfer_id },
             TransferEvent::Cancelled { transfer_id } => Self::Cancelled { transfer_id },
@@ -380,6 +384,7 @@ pub async fn start_engine(app: AppHandle, data_dir: PathBuf) -> Result<AppState>
         settings: shared_settings,
         history,
         failure_notified: Mutex::new(std::collections::HashSet::new()),
+        inline_image_paths: Mutex::new(std::collections::HashSet::new()),
     })
 }
 
@@ -496,6 +501,16 @@ async fn pump_transfer_events(app: AppHandle, mut events_rx: mpsc::Receiver<Tran
             }
             // Copy received text to the system clipboard when configured.
             TransferEvent::TextReceived { text, .. } => auto_copy_text(&app, text),
+            // Authorize read_inline_image for exactly the files the engine
+            // finalized as inline clipboard images.
+            TransferEvent::FileCompleted {
+                path,
+                inline_image: true,
+                ..
+            } => {
+                let state = app.state::<crate::state::AppState>();
+                crate::state::lock(&state.inline_image_paths).insert(path.clone());
+            }
             _ => {}
         }
         if progress_dirty {

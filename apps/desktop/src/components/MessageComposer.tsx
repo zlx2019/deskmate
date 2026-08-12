@@ -17,6 +17,7 @@ export function MessageComposer({
   getPin,
   onPinLearned,
   onSent,
+  onImageSent,
   onSendImage,
   onSendFiles,
 }: {
@@ -27,6 +28,8 @@ export function MessageComposer({
   onPinLearned: (fingerprint: string, pin: string) => void;
   /** Records a successfully sent message in the message stream. */
   onSent: (peerName: string, text: string) => void;
+  /** Records a successfully sent clipboard image as an outgoing chat bubble. */
+  onImageSent: (peerName: string, name: string, bytes: Uint8Array) => void;
   /** Sends a clipboard screenshot through the file-transfer flow. */
   onSendImage: (peer: PeerDto, fileName: string, bytes: Uint8Array) => Promise<void>;
   /** Sends files copied to the clipboard through the file-transfer flow. */
@@ -83,6 +86,8 @@ export function MessageComposer({
   targetRef.current = target;
   const onSendImageRef = useRef(onSendImage);
   onSendImageRef.current = onSendImage;
+  const onImageSentRef = useRef(onImageSent);
+  onImageSentRef.current = onImageSent;
   // A ref prevents duplicate screenshot sends before React can re-render.
   const imageBusyRef = useRef(false);
 
@@ -99,6 +104,8 @@ export function MessageComposer({
     const msg = getLocale().composer;
     try {
       await onSendImageRef.current(peer, fileName, bytes);
+      // Mirror the outgoing image into the chat stream like sent text.
+      onImageSentRef.current(peer.name, fileName, bytes);
       if (notifyResult) {
         api.notify(msg.notifyScreenshotSending, msg.notifyTo(peer.name)).catch(console.error);
       } else {

@@ -135,3 +135,28 @@ fn set_transfer_state(state: &State<'_, AppState>, transfer_id: &str, s: Control
         .map(|tx| tx.send(s).is_ok())
         .unwrap_or(false)
 }
+
+/// Upper bound for inline-image reads; larger files stay file-only in the UI.
+const MAX_INLINE_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Reads a received inline clipboard image for message-stream display.
+///
+/// Only paths registered by the event pump from engine FileCompleted events
+/// are served, so the frontend cannot read arbitrary files. The size cap
+/// bounds memory even when a peer marks a huge file as inline.
+#[tauri::command]
+pub fn read_inline_image(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<tauri::ipc::Response, ErrDto> {
+    let path = PathBuf::from(path);
+    if !lock(&state.inline_image_paths).contains(&path) {
+        return Err(ErrDto::new("inline_image_unavailable"));
+    }
+    let meta = std::fs::metadata(&path).map_err(|e| ErrDto::with("io", e))?;
+    if meta.len() > MAX_INLINE_IMAGE_BYTES {
+        return Err(ErrDto::new("inline_image_too_large"));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| ErrDto::with("io", e))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}

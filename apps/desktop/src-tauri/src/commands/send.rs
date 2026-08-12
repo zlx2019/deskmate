@@ -40,7 +40,10 @@ pub async fn send_files_to(
         fingerprint,
         path_bufs,
         ignore_rules,
-        SendMode::Fresh { pin },
+        SendMode::Fresh {
+            pin,
+            inline_image: false,
+        },
     )?;
     Ok(transfer_id)
 }
@@ -111,7 +114,10 @@ pub async fn send_clipboard_image(
         fingerprint,
         vec![path],
         ignore_rules,
-        SendMode::Fresh { pin },
+        SendMode::Fresh {
+            pin,
+            inline_image: true,
+        },
     )?;
     Ok(transfer_id)
 }
@@ -124,7 +130,7 @@ pub async fn retry_send_transfer(
     transfer_id: String,
     pin: Option<String>,
 ) -> Result<(), ErrDto> {
-    let (fingerprint, paths, ignore_rules) =
+    let (fingerprint, paths, ignore_rules, inline_image) =
         interrupted_params(&state, &transfer_id, "retry_unavailable")?;
     spawn_transfer_task(
         &app,
@@ -133,7 +139,7 @@ pub async fn retry_send_transfer(
         fingerprint,
         paths,
         ignore_rules,
-        SendMode::Fresh { pin },
+        SendMode::Fresh { pin, inline_image },
     )
 }
 
@@ -144,7 +150,7 @@ pub async fn resume_send_transfer(
     state: State<'_, AppState>,
     transfer_id: String,
 ) -> Result<(), ErrDto> {
-    let (fingerprint, paths, ignore_rules) =
+    let (fingerprint, paths, ignore_rules, _) =
         interrupted_params(&state, &transfer_id, "resume_unavailable")?;
     spawn_transfer_task(
         &app,
@@ -201,6 +207,9 @@ enum SendMode {
     Fresh {
         /// Pairing PIN required by the peer.
         pin: Option<String>,
+        /// Marks the manifest as an inline clipboard image (protocol 1.5).
+        /// Resume reads the marker back from the receiver's resume metadata.
+        inline_image: bool,
     },
     /// Resume after negotiating offsets and send only missing ranges.
     Resume,
@@ -211,7 +220,7 @@ fn interrupted_params(
     state: &State<'_, AppState>,
     transfer_id: &str,
     missing_code: &'static str,
-) -> Result<(String, Vec<PathBuf>, String), ErrDto> {
+) -> Result<(String, Vec<PathBuf>, String, bool), ErrDto> {
     let guard = lock(&state.interrupted_sends);
     let item = guard
         .get(transfer_id)
@@ -220,6 +229,7 @@ fn interrupted_params(
         item.fingerprint.clone(),
         item.paths.clone(),
         item.ignore_rules.clone(),
+        item.inline_image,
     ))
 }
 
@@ -262,8 +272,16 @@ fn spawn_transfer_task(
     let tid = transfer_id;
     tauri::async_runtime::spawn(async move {
         let is_resume = matches!(mode, SendMode::Resume);
+        // Preserved for the interrupted-send registry so PIN retries keep it.
+        let inline_image = matches!(
+            mode,
+            SendMode::Fresh {
+                inline_image: true,
+                ..
+            }
+        );
         let result = match mode {
-            SendMode::Fresh { pin } => send_files(
+            SendMode::Fresh { pin, inline_image } => send_files(
                 &identity,
                 &peer.addrs,
                 peer.port,
@@ -271,6 +289,7 @@ fn spawn_transfer_task(
                 Some(tid.clone()),
                 pin,
                 &paths,
+                inline_image,
                 ignore.as_ref(),
                 control_rx,
                 events_tx,
@@ -298,6 +317,7 @@ fn spawn_transfer_task(
             &peer,
             paths,
             ignore_rules,
+            inline_image,
             is_resume,
             &result,
         );
@@ -323,6 +343,7 @@ fn settle_send_result(
     peer: &Peer,
     paths: Vec<PathBuf>,
     ignore_rules: String,
+    inline_image: bool,
     is_resume: bool,
     result: &Result<(), TransferError>,
 ) {
@@ -414,6 +435,7 @@ fn settle_send_result(
                         fingerprint: peer.info.fingerprint.clone(),
                         paths,
                         ignore_rules,
+                        inline_image,
                     },
                 );
             }

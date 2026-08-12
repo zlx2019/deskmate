@@ -162,6 +162,7 @@ async fn full_roundtrip_files_and_dir() {
         None,
         None,
         &[big.clone(), dir.clone()],
+        false,
         // Tests use no ignore rules by default.
         None,
         control,
@@ -200,6 +201,52 @@ async fn full_roundtrip_files_and_dir() {
     );
 }
 
+/// The inline-image marker travels through the manifest to the receiver's
+/// FileCompleted event, while regular sends stay unmarked.
+#[tokio::test]
+async fn inline_image_marker_reaches_receiver() {
+    let mut h = harness(true).await;
+    let src = TempDir::new();
+    let shot = src.path().join("screenshot.png");
+    std::fs::write(&shot, pattern_data(2048, 5)).unwrap();
+
+    let (_tx, control) = watch::channel(ControlState::Running);
+    let (events_tx, _keep) = mpsc::channel(64);
+    send_files(
+        &h.sender_id,
+        &[h.target.0],
+        h.target.1,
+        Some(h.receiver_fp.clone()),
+        None,
+        None,
+        &[shot],
+        true,
+        // Tests use no ignore rules by default.
+        None,
+        control,
+        events_tx,
+    )
+    .await
+    .unwrap();
+
+    let ev = wait_event(&mut h.events, |e| {
+        matches!(e, TransferEvent::FileCompleted { .. })
+    })
+    .await;
+    let TransferEvent::FileCompleted {
+        path, inline_image, ..
+    } = ev
+    else {
+        unreachable!()
+    };
+    assert!(inline_image, "receiver must see the inline marker");
+    assert!(path.exists(), "the image is still saved as a normal file");
+    wait_event(&mut h.events, |e| {
+        matches!(e, TransferEvent::Completed { .. })
+    })
+    .await;
+}
+
 /// Peer rejection returns `Rejected` and its reason to the sender.
 #[tokio::test]
 async fn rejection_propagates_reason() {
@@ -218,6 +265,7 @@ async fn rejection_propagates_reason() {
         None,
         None,
         &[f],
+        false,
         // Tests use no ignore rules by default.
         None,
         control,
@@ -287,6 +335,7 @@ async fn pin_gate_blocks_and_admits() {
             None,
             pin.map(str::to_string),
             std::slice::from_ref(&f),
+            false,
             // Tests use no ignore rules by default.
             None,
             control,
@@ -353,6 +402,7 @@ async fn wrong_fingerprint_is_refused() {
         None,
         None,
         &[f],
+        false,
         // Tests use no ignore rules by default.
         None,
         control,
@@ -382,6 +432,7 @@ async fn duplicate_name_gets_suffixed() {
             None,
             None,
             std::slice::from_ref(&f),
+            false,
             // Tests use no ignore rules by default.
             None,
             control,
@@ -490,6 +541,7 @@ async fn resume_after_interrupt() {
                     file_id: 0,
                     rel_path: "resume.bin".to_string(),
                     size: data.len() as u64,
+                    inline_image: false,
                 }],
                 total_size: data.len() as u64,
                 pin: None,
@@ -582,6 +634,7 @@ async fn overwrite_replaces_existing() {
             None,
             None,
             std::slice::from_ref(&f),
+            false,
             // Tests use no ignore rules by default.
             None,
             control,
@@ -807,6 +860,7 @@ async fn concurrent_same_name_transfers_do_not_clobber() {
                 None,
                 None,
                 std::slice::from_ref(&path),
+                false,
                 // Tests use no ignore rules by default.
                 None,
                 control,
@@ -892,6 +946,7 @@ async fn cancel_interrupts_stalled_receive() {
                 file_id: 0,
                 rel_path: "stall.bin".to_string(),
                 size,
+                inline_image: false,
             }],
             total_size: size,
             pin: None,
@@ -972,6 +1027,7 @@ async fn sender_pause_is_visible_to_receiver() {
             None,
             None,
             &[file],
+            false,
             // Tests use no ignore rules by default.
             None,
             ctrl_rx,
@@ -1017,6 +1073,7 @@ async fn receiver_pause_notifies_sender() {
             tid_arg,
             None,
             &[file],
+            false,
             // Tests use no ignore rules by default.
             None,
             ctrl_rx,
@@ -1072,6 +1129,7 @@ async fn receiver_cancel_settles_sender_as_cancelled() {
             tid_arg,
             None,
             &[file],
+            false,
             // Tests use no ignore rules by default.
             None,
             ctrl_rx,
@@ -1176,6 +1234,7 @@ async fn ignore_rules_apply_end_to_end() {
         None,
         None,
         &[dir],
+        false,
         Some(&rules),
         control,
         events_tx,

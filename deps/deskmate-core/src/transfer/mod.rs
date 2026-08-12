@@ -217,6 +217,9 @@ pub enum TransferEvent {
         file_id: u32,
         /// File path.
         path: PathBuf,
+        /// Peer-declared clipboard-image marker from the manifest, meaningful
+        /// only on the receive side; the send side always reports `false`.
+        inline_image: bool,
     },
     /// Entire transfer task completed.
     Completed {

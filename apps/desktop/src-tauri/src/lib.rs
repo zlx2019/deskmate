@@ -104,6 +104,7 @@ pub fn run() {
             commands::send::retry_send_transfer,
             commands::receive::respond_offer,
             commands::receive::precheck_receive,
+            commands::receive::read_inline_image,
             commands::receive::pause_transfer,
             commands::receive::resume_transfer,
             commands::receive::cancel_transfer,

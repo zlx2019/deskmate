@@ -11,6 +11,7 @@
     "dialog:default",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-read-image",
+    "clipboard-manager:allow-write-image",
     "core:window:allow-hide",
     "core:window:allow-set-theme"
   ]

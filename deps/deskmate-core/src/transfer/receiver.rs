@@ -1208,6 +1208,7 @@ async fn finalize_file(
         transfer_id: transfer_id.to_string(),
         file_id: meta.file_id,
         path: final_path,
+        inline_image: meta.inline_image,
     })
     .await;
     Ok(())

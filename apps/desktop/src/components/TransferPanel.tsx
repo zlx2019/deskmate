@@ -1,6 +1,7 @@
 // Right panel with transfer/history tabs, text-message stream, and composer.
 
-import { memo, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   Card as ACard,
@@ -13,9 +14,10 @@ import {
 // Settings action uses the item-001 wand icon from the component library.
 import settingsIconUrl from "animal-island-ui/items/item-001.png";
 import { api } from "../api";
+import { writeClipboardImage } from "../clipboard";
 import { useI18n } from "../i18n";
 import { humanBytes, type PeerDto, type TextMsg, type TransferItem } from "../types";
-import { CardClose, ClearButton } from "./ClearButton";
+import { ClearButton } from "./ClearButton";
 import { HistoryList } from "./HistoryList";
 import { MessageComposer } from "./MessageComposer";
 
@@ -186,28 +188,108 @@ function PanelButton({
   );
 }
 
-/** Text-message card with direction label and hover delete action. */
-function TextCard({ msg, onRemove }: { msg: TextMsg; onRemove: (id: string) => void }) {
+/** Chat-style message bubble: outgoing on the right, incoming on the left,
+ * with a raindrop tail toward the sender side and hover actions. */
+function TextCard({
+  msg,
+  onRemove,
+  onPreview,
+}: {
+  msg: TextMsg;
+  onRemove: (id: string) => void;
+  /** Opens the full-size Lightbox for image messages. */
+  onPreview: (url: string) => void;
+}) {
   const { t } = useI18n();
   const out = msg.direction === "out";
+  // The near-square corner on the sender side forms the raindrop tail.
+  const tail = out ? "rounded-2xl rounded-br-sm" : "rounded-2xl rounded-bl-sm";
   return (
-    <ACard pattern="app-green" className="transfer-card group relative">
-      <CardClose onClick={() => onRemove(msg.id)} />
-      <div className="flex items-center gap-2">
-        <span className={`font-gauge text-xs ${out ? "text-ember" : "text-sonar"}`}>✉</span>
-        <span className="min-w-0 flex-1 truncate text-sm">
-          {out ? t.transfer.sendTo : t.transfer.recvFrom}
-          <span className="text-fog">{msg.peerName}</span>
-        </span>
-        <PanelButton onClick={() => navigator.clipboard.writeText(msg.text)}>
-          {t.transfer.copy}
-        </PanelButton>
+    <div className={`flex flex-col ${out ? "items-end" : "items-start"}`}>
+      {/* Direction label: destination for sent, source for received. */}
+      <div className="mb-0.5 px-1 text-[11px] text-mist">
+        {out ? `${t.transfer.sendTo}${msg.peerName}` : msg.peerName}
       </div>
-      {/* pre-wrap preserves the original whitespace and line breaks. */}
-      <div className="mt-1.5 max-h-28 select-text overflow-auto whitespace-pre-wrap break-all rounded-xl border border-line bg-panel px-2.5 py-1.5 font-gauge text-xs text-fog/90">
-        {msg.text}
+      {/* Actions sit beside the bubble toward the panel center, fading in on
+          hover; flex-row-reverse mirrors the pair for outgoing messages. */}
+      <div
+        className={`group flex max-w-[85%] items-center gap-1.5 ${out ? "flex-row-reverse" : ""}`}
+      >
+        {msg.image ? (
+          <button
+            onClick={() => onPreview(msg.image!.url)}
+            title={msg.image.name}
+            className={`block min-w-0 cursor-zoom-in overflow-hidden border-2 bg-panel ${tail} ${
+              out ? "border-sonar/40" : "border-line"
+            }`}
+          >
+            <img src={msg.image.url} alt={msg.image.name} className="max-h-40 object-contain" />
+          </button>
+        ) : (
+          /* The scroll area nests inside the bubble padding so its thin
+             scrollbar stays clear of the border and rounded corners. */
+          <div
+            className={`min-w-0 border-2 px-3 py-1.5 font-gauge text-xs leading-relaxed ${tail} ${
+              out ? "border-sonar/30 bg-chip text-fog" : "border-line bg-panel-2 text-fog/90"
+            }`}
+          >
+            {/* pre-wrap preserves the original whitespace and line breaks. */}
+            <div className="bubble-scroll max-h-40 overflow-y-auto whitespace-pre-wrap break-all select-text">
+              {msg.text}
+            </div>
+          </div>
+        )}
+        <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            onClick={() => {
+              // Text copies directly; images decode back into the clipboard.
+              if (msg.image) {
+                writeClipboardImage(msg.image.url).catch(console.error);
+              } else {
+                navigator.clipboard.writeText(msg.text).catch(console.error);
+              }
+            }}
+            title={t.transfer.copy}
+            className="cursor-pointer p-0.5 text-faint transition-colors hover:text-sonar"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
+          <button
+            onClick={() => onRemove(msg.id)}
+            title={t.clear.delete}
+            className="cursor-pointer p-0.5 text-faint transition-colors hover:text-alert"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
-    </ACard>
+    </div>
+  );
+}
+
+/** Full-screen image preview closed by a click anywhere or the Escape key. */
+function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  // A portal escapes the panel's overflow clipping and stacking context.
+  return createPortal(
+    <div
+      onClick={onClose}
+      className="anim-fade-in fixed inset-0 z-[60] flex cursor-zoom-out items-center justify-center bg-black/75 p-8"
+    >
+      <img src={url} alt="" className="max-h-full max-w-full rounded-xl shadow-2xl" />
+    </div>,
+    document.body,
   );
 }
 
@@ -230,6 +312,7 @@ export const TransferPanel = memo(function TransferPanel({
   onResume,
   onPinLearned,
   onTextSent,
+  onImageSent,
   onSendImage,
   onSendFiles,
   onRemoveText,
@@ -248,6 +331,8 @@ export const TransferPanel = memo(function TransferPanel({
   onPinLearned: (fingerprint: string, pin: string) => void;
   /** Records successfully sent text in the message stream. */
   onTextSent: (peerName: string, text: string) => void;
+  /** Records a successfully sent clipboard image as an outgoing chat bubble. */
+  onImageSent: (peerName: string, name: string, bytes: Uint8Array) => void;
   /** Sends a clipboard screenshot from the global-hotkey flow. */
   onSendImage: (peer: PeerDto, fileName: string, bytes: Uint8Array) => Promise<void>;
   /** Sends copied clipboard files from the global-hotkey flow. */
@@ -263,6 +348,13 @@ export const TransferPanel = memo(function TransferPanel({
   const { t } = useI18n();
   // Upper tabs switch between transfers and history, remounting history to reload it.
   const [tab, setTab] = useState<"tasks" | "history">("tasks");
+  // Full-size image preview URL, or null when the Lightbox is closed.
+  const [preview, setPreview] = useState<string | null>(null);
+  // Chat-style stream keeps the newest message visible at the bottom.
+  const msgEndRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    msgEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [texts]);
   const ordered = [...transfers].sort((a, b) => b.startedAt - a.startedAt);
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
@@ -344,8 +436,12 @@ export const TransferPanel = memo(function TransferPanel({
                       {t.transfer.emptyTexts}
                     </div>
                   ) : (
-                    texts.map((m) => <TextCard key={m.id} msg={m} onRemove={onRemoveText} />)
+                    texts.map((m) => (
+                      <TextCard key={m.id} msg={m} onRemove={onRemoveText} onPreview={setPreview} />
+                    ))
                   )}
+                  {/* Scroll anchor keeping the newest message in view. */}
+                  <div ref={msgEndRef} />
                 </div>
               ),
             },
@@ -362,9 +458,11 @@ export const TransferPanel = memo(function TransferPanel({
         getPin={getPin}
         onPinLearned={onPinLearned}
         onSent={onTextSent}
+        onImageSent={onImageSent}
         onSendImage={onSendImage}
         onSendFiles={onSendFiles}
       />
+      {preview && <Lightbox url={preview} onClose={() => setPreview(null)} />}
     </div>
   );
 });
