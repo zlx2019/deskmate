@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Card as ACard,
+  Checkbox as ACheckbox,
   Input as AInput,
   Notification as ANotification,
   Radio as ARadio,
@@ -25,7 +26,14 @@ import {
   saveStyle,
   type StyleMode,
 } from "../../theme";
-import { AVATARS, avatarBlobUrl, avatarHashOf, type PeerDto, type Settings } from "../../types";
+import {
+  AVATARS,
+  avatarBlobUrl,
+  avatarHashOf,
+  type AutoCopyKind,
+  type PeerDto,
+  type Settings,
+} from "../../types";
 import { Avatar } from "../Radar";
 import { Button, ModalShell, ToggleRow } from "./ModalShell";
 import logoUrl from "../../assets/deskmate-logo.svg";
@@ -361,19 +369,34 @@ export function SettingsModal({
                 {/* Compact inline toggles that wrap when needed. */}
                 <div className="flex flex-wrap items-center gap-x-8">
                   <ToggleRow
-                    label={t.settings.autoCopy}
-                    checked={settings.autoCopyText}
-                    onChange={(v) => setSettings({ ...settings, autoCopyText: v })}
+                    label={t.settings.stealth}
+                    checked={settings.passive}
+                    onChange={(v) => setSettings({ ...settings, passive: v })}
                   />
                   <ToggleRow
                     label={t.settings.autostart}
                     checked={settings.autostart}
                     onChange={(v) => setSettings({ ...settings, autostart: v })}
                   />
-                  <ToggleRow
-                    label={t.settings.stealth}
-                    checked={settings.passive}
-                    onChange={(v) => setSettings({ ...settings, passive: v })}
+                </div>
+
+                {/* Auto copy is controlled by the kind selection alone; an
+                    empty selection disables it. */}
+                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <span className="text-sm text-fog">{t.settings.autoCopy}</span>
+                  <ACheckbox
+                    size="small"
+                    direction="horizontal"
+                    value={settings.autoCopyKinds}
+                    options={[
+                      { label: <>📝 {t.settings.autoCopyKinds.text}</>, value: "text" },
+                      { label: <>🖼️ {t.settings.autoCopyKinds.image}</>, value: "image" },
+                      { label: <>📄 {t.settings.autoCopyKinds.file}</>, value: "file" },
+                      { label: <>📁 {t.settings.autoCopyKinds.dir}</>, value: "dir" },
+                    ]}
+                    onChange={(values) =>
+                      setSettings({ ...settings, autoCopyKinds: values as AutoCopyKind[] })
+                    }
                   />
                 </div>
                   </div>

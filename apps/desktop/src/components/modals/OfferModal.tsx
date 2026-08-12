@@ -2,16 +2,28 @@
 
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Card as ACard, Tag as ATag } from "animal-island-ui";
 import { api } from "../../api";
 import { useI18n } from "../../i18n";
 import {
   humanBytes,
+  platformLabel,
   type ConflictPolicy,
   type OfferDto,
   type PrecheckDto,
 } from "../../types";
 import { Avatar } from "../Radar";
 import { Button, ModalShell } from "./ModalShell";
+
+/** Picks a manifest-row emoji from the file extension. */
+function fileIcon(relPath: string): string {
+  const ext = relPath.split(".").pop()?.toLowerCase() ?? "";
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "heic"].includes(ext)) return "🖼️";
+  if (["mp4", "mov", "mkv", "avi", "webm"].includes(ext)) return "🎬";
+  if (["mp3", "wav", "flac", "aac", "ogg", "m4a"].includes(ext)) return "🎵";
+  if (["zip", "tar", "gz", "7z", "rar", "dmg", "iso"].includes(ext)) return "🗜️";
+  return "📄";
+}
 
 /** Incoming-offer dialog with capacity and file-name conflict checks. */
 export function OfferModal({
@@ -69,58 +81,78 @@ export function OfferModal({
   return (
     <ModalShell title={t.offer.title}>
       <div className="px-5 py-4">
-        <div className="flex items-center gap-3">
-          <Avatar
-            name={offer.peerName}
-            fingerprint={offer.peerFingerprint}
-            size={40}
-            avatar={offer.peerAvatar}
-            src={avatarSrc}
-          />
-          <div className="min-w-0">
-            <div className="truncate text-sm text-fog">
-              <span className="font-medium">{offer.peerName}</span> {t.offer.wantsToSend}
+        {/* Sender card matching the peer-dialog style. */}
+        <ACard pattern="app-green" className="transfer-card">
+          <div className="flex items-center gap-3">
+            <div className="relative shrink-0">
+              <Avatar
+                name={offer.peerName}
+                fingerprint={offer.peerFingerprint}
+                size={48}
+                avatar={offer.peerAvatar}
+                src={avatarSrc}
+              />
+              <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-panel bg-live" />
             </div>
-            <div className="gauge-label mt-0.5">
-              {t.offer.filesSummary(offer.files.length, humanBytes(offer.totalSize))}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 truncate text-sm font-bold text-fog">
+                  {offer.peerName}
+                </span>
+                <ATag size="small" variant="soft" color="app-teal">
+                  {platformLabel(offer.peerPlatform)}
+                </ATag>
+              </div>
+              <div className="mt-1 truncate text-xs text-mist">{t.offer.wantsToSend}</div>
             </div>
           </div>
-        </div>
+        </ACard>
 
-        <div className="mt-3 max-h-40 overflow-y-auto rounded-xl border-2 border-line bg-panel-2">
+        {/* Manifest summary doubles as the list heading. */}
+        <div className="gauge-label mt-3 mb-1">
+          {t.offer.filesSummary(offer.files.length, humanBytes(offer.totalSize))}
+        </div>
+        <div className="bubble-scroll max-h-40 overflow-y-auto rounded-xl border-2 border-line bg-panel-2">
           {offer.files.map((f) => (
             <div
               key={f.fileId}
-              className="flex items-center gap-3 border-b border-line/60 px-3 py-1.5 last:border-b-0"
+              className="flex items-center gap-2 border-b border-line/60 px-3 py-1.5 last:border-b-0"
             >
+              <span className="shrink-0 text-xs" aria-hidden>
+                {fileIcon(f.relPath)}
+              </span>
               <span className="min-w-0 flex-1 truncate font-gauge text-xs text-fog/90">
                 {f.relPath}
               </span>
-              <span className="font-gauge text-[11px] text-mist">{humanBytes(f.size)}</span>
+              <span className="shrink-0 font-gauge text-[11px] text-mist">
+                {humanBytes(f.size)}
+              </span>
             </div>
           ))}
         </div>
 
-        {/* Save location and available disk space. */}
-        <div className="mt-3 flex items-center gap-2">
-          <span className="gauge-label shrink-0">{t.offer.saveTo}</span>
-          <span className="min-w-0 flex-1 truncate font-gauge text-xs text-fog/90">
-            {saveDir ?? defaultDir}
-          </span>
-          <button
-            onClick={pickDir}
-            className="shrink-0 cursor-pointer text-xs text-sonar transition-colors hover:text-fog"
-          >
-            {t.offer.change}
-          </button>
-        </div>
-        {precheck?.freeBytes != null && (
-          <div className={`mt-1 text-xs ${notEnough ? "text-alert" : "text-mist"}`}>
-            {notEnough
-              ? t.offer.notEnough(humanBytes(precheck.freeBytes), humanBytes(offer.totalSize))
-              : t.offer.freeSpace(humanBytes(precheck.freeBytes))}
+        {/* Save location with the disk-space preflight inside one panel. */}
+        <div className="mt-3 rounded-xl border-2 border-line bg-panel-2 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className="gauge-label shrink-0">{t.offer.saveTo}</span>
+            <span className="min-w-0 flex-1 truncate font-gauge text-xs text-fog/90">
+              {saveDir ?? defaultDir}
+            </span>
+            <button
+              onClick={pickDir}
+              className="shrink-0 cursor-pointer rounded-lg border border-line px-2 py-0.5 text-xs text-sonar transition-colors hover:border-sonar"
+            >
+              {t.offer.change}
+            </button>
           </div>
-        )}
+          {precheck?.freeBytes != null && (
+            <div className={`mt-1 text-xs ${notEnough ? "text-alert" : "text-mist"}`}>
+              {notEnough
+                ? t.offer.notEnough(humanBytes(precheck.freeBytes), humanBytes(offer.totalSize))
+                : t.offer.freeSpace(humanBytes(precheck.freeBytes))}
+            </div>
+          )}
+        </div>
 
         {/* File-name conflicts, with an inline choice for the ask policy. */}
         {conflicts.length > 0 &&

@@ -385,6 +385,7 @@ pub async fn start_engine(app: AppHandle, data_dir: PathBuf) -> Result<AppState>
         history,
         failure_notified: Mutex::new(std::collections::HashSet::new()),
         inline_image_paths: Mutex::new(std::collections::HashSet::new()),
+        accepted_save_dirs: Mutex::new(HashMap::new()),
     })
 }
 
@@ -442,6 +443,7 @@ fn spawn_pumps(
                 PendingOffer {
                     reply: offer.reply,
                     file_ids: offer.files.iter().map(|f| f.file_id).collect(),
+                    transfer_id: offer.transfer_id.clone(),
                 },
             );
             notify_if_unfocused(
@@ -471,6 +473,10 @@ async fn pump_transfer_events(app: AppHandle, mut events_rx: mpsc::Receiver<Tran
     let mut last_progress: HashMap<String, std::time::Instant> = HashMap::new();
     // Current file progress per active transfer for system progress aggregation.
     let mut active: HashMap<String, (u64, u64)> = HashMap::new();
+    // Finalized paths per accepted receive task, consumed by auto copy on
+    // completion. Sender tasks never register a save directory, so their
+    // FileCompleted events (whose paths are the local sources) stay out.
+    let mut received_files: HashMap<String, Vec<PathBuf>> = HashMap::new();
     while let Some(event) = events_rx.recv().await {
         let mut progress_dirty = false;
         match &event {
@@ -492,24 +498,45 @@ async fn pump_transfer_events(app: AppHandle, mut events_rx: mpsc::Receiver<Tran
                 last_progress.insert(transfer_id.to_string(), now);
                 progress_dirty = true;
             }
-            TransferEvent::Completed { transfer_id }
-            | TransferEvent::Cancelled { transfer_id }
+            TransferEvent::Completed { transfer_id } => {
+                last_progress.remove(transfer_id);
+                active.remove(transfer_id);
+                progress_dirty = true;
+                auto_copy_received_files(
+                    &app,
+                    transfer_id,
+                    received_files.remove(transfer_id).unwrap_or_default(),
+                );
+            }
+            TransferEvent::Cancelled { transfer_id }
             | TransferEvent::Interrupted { transfer_id, .. } => {
                 last_progress.remove(transfer_id);
                 active.remove(transfer_id);
                 progress_dirty = true;
+                received_files.remove(transfer_id);
+                let state = app.state::<crate::state::AppState>();
+                crate::state::lock(&state.accepted_save_dirs).remove(transfer_id);
             }
             // Copy received text to the system clipboard when configured.
             TransferEvent::TextReceived { text, .. } => auto_copy_text(&app, text),
-            // Authorize read_inline_image for exactly the files the engine
-            // finalized as inline clipboard images.
             TransferEvent::FileCompleted {
+                transfer_id,
                 path,
-                inline_image: true,
+                inline_image,
                 ..
             } => {
                 let state = app.state::<crate::state::AppState>();
-                crate::state::lock(&state.inline_image_paths).insert(path.clone());
+                if *inline_image {
+                    // Authorize read_inline_image for exactly the files the
+                    // engine finalized as inline clipboard images.
+                    crate::state::lock(&state.inline_image_paths).insert(path.clone());
+                    auto_copy_received_image(&app, path);
+                } else if crate::state::lock(&state.accepted_save_dirs).contains_key(transfer_id) {
+                    received_files
+                        .entry(transfer_id.clone())
+                        .or_default()
+                        .push(path.clone());
+                }
             }
             _ => {}
         }
@@ -701,6 +728,10 @@ fn try_auto_accept(
         // The session is gone; discard it silently.
         return None;
     }
+    // Register the effective save directory for receive-side auto copy.
+    let download_dir = lock(settings).download_dir.clone();
+    lock(&app.state::<AppState>().accepted_save_dirs)
+        .insert(offer.transfer_id.clone(), download_dir);
     notify_if_unfocused(
         app,
         "Deskmate",
@@ -749,16 +780,87 @@ pub(crate) fn is_safe_hash(hash: &str) -> bool {
     !hash.is_empty() && hash.len() <= 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Returns whether the kind is selected for auto copy.
+fn auto_copy_enabled(app: &AppHandle, kind: crate::settings::AutoCopyKind) -> bool {
+    let state = app.state::<AppState>();
+    lock(&state.settings).auto_copy_kinds.contains(&kind)
+}
+
 /// Copies received text to the system clipboard when enabled.
 fn auto_copy_text(app: &AppHandle, text: &str) {
     use tauri_plugin_clipboard_manager::ClipboardExt;
-    let enabled = lock(&app.state::<AppState>().settings).auto_copy_text;
-    if !enabled {
+    if !auto_copy_enabled(app, crate::settings::AutoCopyKind::Text) {
         return;
     }
     if let Err(e) = app.clipboard().write_text(text.to_string()) {
         tracing::debug!("failed to copy received text to clipboard: {e}");
     }
+}
+
+/// Copies a received inline clipboard screenshot back into the clipboard.
+fn auto_copy_received_image(app: &AppHandle, path: &Path) {
+    if !auto_copy_enabled(app, crate::settings::AutoCopyKind::Image) {
+        return;
+    }
+    let app = app.clone();
+    let path = path.to_path_buf();
+    // File read and PNG decode are blocking work.
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        let result = std::fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string()))
+            .and_then(|img| app.clipboard().write_image(&img).map_err(|e| e.to_string()));
+        if let Err(e) = result {
+            tracing::debug!("failed to copy received image to clipboard: {e}");
+        }
+    });
+}
+
+/// Copies top-level received entries as pasteable file references on completion.
+///
+/// Entries are derived by stripping the registered save directory from each
+/// finalized path and keeping the first component, so a received directory
+/// pastes as one folder. The file and dir kinds filter entries by type.
+fn auto_copy_received_files(app: &AppHandle, transfer_id: &str, files: Vec<PathBuf>) {
+    use crate::settings::AutoCopyKind;
+    let Some(save_dir) = lock(&app.state::<AppState>().accepted_save_dirs).remove(transfer_id)
+    else {
+        return;
+    };
+    if files.is_empty() {
+        return;
+    }
+    let (want_file, want_dir) = (
+        auto_copy_enabled(app, AutoCopyKind::File),
+        auto_copy_enabled(app, AutoCopyKind::Dir),
+    );
+    if !want_file && !want_dir {
+        return;
+    }
+    // Deduplicate while preserving the manifest order.
+    let mut tops: Vec<PathBuf> = Vec::new();
+    for path in &files {
+        let Ok(rel) = path.strip_prefix(&save_dir) else {
+            continue;
+        };
+        let Some(first) = rel.components().next() else {
+            continue;
+        };
+        let top = save_dir.join(first);
+        if !tops.contains(&top) {
+            tops.push(top);
+        }
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let selected: Vec<PathBuf> = tops
+            .into_iter()
+            .filter(|p| if p.is_dir() { want_dir } else { want_file })
+            .collect();
+        if !selected.is_empty() && !crate::clipfiles::write_file_paths(&selected) {
+            tracing::debug!("failed to copy received files to clipboard");
+        }
+    });
 }
 
 /// Sends localized system notifications for significant non-progress events.

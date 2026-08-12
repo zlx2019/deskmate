@@ -17,6 +17,8 @@ pub struct PendingOffer {
     pub reply: oneshot::Sender<OfferDecision>,
     /// IDs of every file in the manifest; milestone 2 accepts the entire offer.
     pub file_ids: Vec<u32>,
+    /// Transfer ID for registering the accepted save directory.
+    pub transfer_id: String,
 }
 
 /// Pending decision map: offer ID to response channel.
@@ -74,6 +76,10 @@ pub struct AppState {
     /// serves paths registered here, so the frontend can never read arbitrary
     /// files. Session-scoped and small: one entry per received screenshot.
     pub inline_image_paths: Mutex<HashSet<PathBuf>>,
+    /// Save directory per accepted receive task, registered on acceptance and
+    /// removed at terminal state. Doubles as the receive-side marker that
+    /// keeps sender FileCompleted events out of the auto-copy flow.
+    pub accepted_save_dirs: Mutex<HashMap<String, PathBuf>>,
 }
 
 /// Locks a standard mutex, recovering the inner data if it was poisoned.

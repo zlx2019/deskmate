@@ -60,6 +60,9 @@ export type TransferEventDto =
 /** File-name conflict policy: rename, overwrite, or ask. */
 export type ConflictPolicy = "rename" | "overwrite" | "ask";
 
+/** Received-content kinds eligible for automatic clipboard copy. */
+export type AutoCopyKind = "text" | "image" | "file" | "dir";
+
 /** Trusted device accepted without confirmation. */
 export interface TrustedDevice {
   fingerprint: string;
@@ -83,8 +86,10 @@ export interface Settings {
   trusted: TrustedDevice[];
   /** Optional pairing PIN required for incoming files and text. */
   pin: string | null;
-  /** Automatically copy received text to the system clipboard. */
+  /** Legacy master switch, round-tripped unchanged for storage migration. */
   autoCopyText: boolean;
+  /** Received-content kinds auto-copied to the clipboard; empty disables. */
+  autoCopyKinds: AutoCopyKind[];
   /** Global send-clipboard hotkey in Tauri syntax; null disables it. */
   sendClipboardHotkey: string | null;
   /** Global copy-and-send hotkey; null disables it. */
@@ -179,6 +184,12 @@ export interface TextMsg {
     url: string;
     name: string;
   };
+}
+
+/** Maps a platform ID to its display name for tags. */
+export function platformLabel(platform: string): string {
+  const map: Record<string, string> = { macos: "macOS", windows: "Windows", linux: "Linux" };
+  return map[platform.toLowerCase()] ?? platform;
 }
 
 /** Formats byte counts, for example 1536 as "1.5 KB". */

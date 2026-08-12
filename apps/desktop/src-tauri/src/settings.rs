@@ -66,6 +66,20 @@ pub enum ConflictPolicySetting {
     Ask,
 }
 
+/// Received-content kinds eligible for automatic clipboard copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoCopyKind {
+    /// Text messages, written as plain text.
+    Text,
+    /// Inline clipboard screenshots, written as bitmap images.
+    Image,
+    /// Received files, written as pasteable file references.
+    File,
+    /// Received directories, written as pasteable file references.
+    Dir,
+}
+
 /// Trusted device whose transfers are accepted without confirmation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,8 +112,13 @@ pub struct Settings {
     pub trusted: Vec<TrustedDevice>,
     /// Optional pairing PIN required for incoming files and text.
     pub pin: Option<String>,
-    /// Automatically copies received text to the system clipboard.
+    /// Legacy master switch kept only to migrate stored settings; the kind
+    /// list below is the sole control now. [`Settings::load`] folds a stored
+    /// `false` into an empty kind list and then pins this field to `true`.
     pub auto_copy_text: bool,
+    /// Received-content kinds copied to the clipboard; empty disables auto
+    /// copy. The default matches the pre-split behavior of the master switch.
+    pub auto_copy_kinds: Vec<AutoCopyKind>,
     /// Global send-clipboard hotkey in Tauri syntax; None disables it.
     pub send_clipboard_hotkey: Option<String>,
     /// Global copy-and-send hotkey. It simulates copying the selection, waits
@@ -126,6 +145,7 @@ impl Default for Settings {
             trusted: Vec::new(),
             pin: None,
             auto_copy_text: false,
+            auto_copy_kinds: vec![AutoCopyKind::Text],
             send_clipboard_hotkey: Some("CmdOrCtrl+Shift+D".to_string()),
             copy_send_hotkey: Some("CmdOrCtrl+Shift+X".to_string()),
             ignore_rules: DEFAULT_IGNORE_RULES.to_string(),
@@ -137,10 +157,24 @@ impl Default for Settings {
 impl Settings {
     /// Loads settings from the data directory, falling back on missing or invalid data.
     pub fn load(data_dir: &Path) -> Self {
-        std::fs::read(data_dir.join(SETTINGS_FILE))
+        let mut s: Self = std::fs::read(data_dir.join(SETTINGS_FILE))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        s.migrate_auto_copy();
+        s
+    }
+
+    /// Folds the retired auto-copy master switch into the kind list.
+    ///
+    /// A stored `false` (also the fresh-install default) clears the kinds so
+    /// upgrades never enable copying that was off; afterwards the flag stays
+    /// pinned to `true` and the kind list alone controls the feature.
+    fn migrate_auto_copy(&mut self) {
+        if !self.auto_copy_text {
+            self.auto_copy_kinds.clear();
+            self.auto_copy_text = true;
+        }
     }
 
     /// Persists settings to the data directory.
@@ -175,6 +209,45 @@ mod tests {
         );
         assert_eq!(s.copy_send_hotkey.as_deref(), Some("CmdOrCtrl+Shift+X"));
         assert_eq!(s.ignore_rules, DEFAULT_IGNORE_RULES);
+        // Pre-1.5 users with the switch on copied text; the default keeps that.
+        assert_eq!(s.auto_copy_kinds, vec![AutoCopyKind::Text]);
+    }
+
+    /// The retired master switch folds into the kind list exactly once.
+    #[test]
+    fn auto_copy_migration_respects_old_switch() {
+        // Switch off (or fresh install): kinds clear so nothing turns on.
+        let mut off: Settings =
+            serde_json::from_str(r#"{"autoCopyText":false}"#).expect("legacy off should parse");
+        off.migrate_auto_copy();
+        assert!(off.auto_copy_kinds.is_empty());
+        assert!(off.auto_copy_text);
+
+        // Switch on without a kind list: the text default carries over.
+        let mut on: Settings =
+            serde_json::from_str(r#"{"autoCopyText":true}"#).expect("legacy on should parse");
+        on.migrate_auto_copy();
+        assert_eq!(on.auto_copy_kinds, vec![AutoCopyKind::Text]);
+
+        // Migrated settings with kinds explicitly cleared stay cleared.
+        let mut cleared: Settings =
+            serde_json::from_str(r#"{"autoCopyText":true,"autoCopyKinds":[]}"#)
+                .expect("cleared kinds should parse");
+        cleared.migrate_auto_copy();
+        assert!(cleared.auto_copy_kinds.is_empty());
+    }
+
+    /// The kind list round-trips through lowercase JSON values.
+    #[test]
+    fn auto_copy_kinds_roundtrip() {
+        let s: Settings = serde_json::from_str(r#"{"autoCopyKinds":["image","file","dir"]}"#)
+            .expect("kind list should parse");
+        assert_eq!(
+            s.auto_copy_kinds,
+            vec![AutoCopyKind::Image, AutoCopyKind::File, AutoCopyKind::Dir]
+        );
+        let json = serde_json::to_string(&s).expect("settings should serialize");
+        assert!(json.contains(r#""autoCopyKinds":["image","file","dir"]"#));
     }
 
     /// Clearing the rules persists an empty string; present fields must never be refilled.

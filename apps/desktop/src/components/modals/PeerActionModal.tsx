@@ -7,15 +7,9 @@ import { Card as ACard, Divider as ADivider, Tag as ATag } from "animal-island-u
 import { api } from "../../api";
 import { readClipboardImagePng } from "../../clipboard";
 import { formatError, useI18n } from "../../i18n";
-import { type PeerDto } from "../../types";
+import { platformLabel, type PeerDto } from "../../types";
 import { Avatar } from "../Radar";
 import { Button, ModalShell, ToggleRow } from "./ModalShell";
-
-/** Maps a platform ID to its display name for the tag. */
-function platformLabel(platform: string): string {
-  const map: Record<string, string> = { macos: "macOS", windows: "Windows", linux: "Linux" };
-  return map[platform.toLowerCase()] ?? platform;
-}
 
 /** Peer dialog for sending files and text. */
 export function PeerActionModal({
