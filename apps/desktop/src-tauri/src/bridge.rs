@@ -911,6 +911,11 @@ pub(crate) fn notify_if_unfocused(app: &AppHandle, title: &str, body: &str) {
         return;
     }
     bump_unread(app);
+    // The switch only suppresses system banners; the unread badge remains.
+    let state = app.state::<AppState>();
+    if !lock(&state.settings).notifications {
+        return;
+    }
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         tracing::debug!("failed to send system notification: {e}");
     }
