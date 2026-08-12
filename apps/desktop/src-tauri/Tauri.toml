@@ -1,0 +1,53 @@
+productName = "Deskmate"
+version = "../package.json"
+identifier = "io.github.zlx2019.deskmate"
+
+[build]
+beforeDevCommand = "pnpm dev"
+devUrl = "http://localhost:1420"
+beforeBuildCommand = "pnpm build"
+frontendDist = "../dist"
+
+[app]
+[app.security]
+csp = "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'"
+
+[[app.windows]]
+title = "Deskmate"
+width = 1120
+height = 780
+minWidth = 760
+minHeight = 560
+dragDropEnabled = true
+backgroundColor = "#90c9a1"
+
+[bundle]
+active = true
+targets = ["app", "dmg", "nsis", "appimage", "deb"]
+publisher = "zlx2019"
+copyright = "Copyright © 2026 zlx2019"
+category = "Utility"
+shortDescription = "LAN file and text transfer"
+longDescription = "Deskmate is a desktop application for transferring files/text within a local area network: no central server, automatic discovery of devices on the same subnet, drag and drop onto a device avatar to send, with TLS encryption throughout."
+icon = [
+  "icons/32x32.png",
+  "icons/128x128.png",
+  "icons/128x128@2x.png",
+  "icons/icon.icns",
+  "icons/icon.ico",
+]
+
+[bundle.macos]
+minimumSystemVersion = "10.15"
+
+# Localized permission-dialog strings; destination is relative to .app/Contents
+[bundle.macos.files]
+"Resources/zh-Hans.lproj/InfoPlist.strings" = "macos/zh-Hans.lproj/InfoPlist.strings"
+
+[bundle.windows.nsis]
+installMode = "perMachine"
+installerHooks = "windows/hooks.nsh"
+# Installer UI follows the OS language; first entry is the fallback
+languages = ["English", "SimpChinese"]
+
+[bundle.linux.deb]

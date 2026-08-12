@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Deskmate island logo: green island, palm tree, pink beach, and blue ripples. -->
+  <g stroke="#5ec4e8" stroke-width="3.4" stroke-linecap="round" fill="none">
+    <path d="M 8 104 h 13"/>
+    <path d="M 14 116 h 9"/>
+    <path d="M 108 106 h 13"/>
+    <path d="M 104 118 h 9"/>
+  </g>
+  <ellipse cx="64" cy="112" rx="41" ry="10" fill="#5ec4e8"/>
+  <ellipse cx="50" cy="110" rx="13" ry="2.6" fill="#ffffff" opacity="0.5"/>
+  <ellipse cx="64" cy="101" rx="35" ry="13" fill="#f4b18e"/>
+  <circle cx="64" cy="82" r="33" fill="#8cc63f"/>
+  <path d="M 31 82 A 33 33 0 0 0 97 82 Q 64 96 31 82 Z" fill="#7ab52f" opacity="0.55"/>
+  <g fill="#5f9e21">
+    <polygon points="46,76 52,68 57,77"/>
+    <polygon points="66,84 72,76 78,85"/>
+    <polygon points="82,68 87,61 91,70"/>
+    <polygon points="52,92 57,85 62,93"/>
+  </g>
+  <path d="M 61 56 C 59 46, 61 38, 63 28" stroke="#e6b954" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <g stroke="#c99a37" stroke-width="1.8" stroke-linecap="round">
+    <path d="M 59.6 48 l 5.4 -1.6"/>
+    <path d="M 60.2 41 l 5.2 -1.5"/>
+    <path d="M 61.4 34 l 5 -1.5"/>
+  </g>
+  <g fill="#5faf35">
+    <path d="M 63 28 C 52 18, 40 17, 31 23 C 41 26, 53 27, 63 31 Z"/>
+    <path d="M 63 28 C 74 18, 86 17, 95 23 C 85 26, 73 27, 63 31 Z"/>
+  </g>
+  <g fill="#7ac74f">
+    <path d="M 63 28 C 49 25, 37 31, 30 42 C 41 39, 53 34, 63 32 Z"/>
+    <path d="M 63 28 C 77 25, 89 31, 96 42 C 85 39, 73 34, 63 32 Z"/>
+    <path d="M 63 28 C 59 17, 62 8, 71 3 C 67 13, 66 21, 65 29 Z"/>
+  </g>
+</svg>

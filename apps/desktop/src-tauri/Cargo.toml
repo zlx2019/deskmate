@@ -1,0 +1,68 @@
+[package]
+name = "deskmate-desktop"
+description = "deskmate desktop app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+name = "deskmate_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = ["config-toml"] }
+
+[dependencies]
+deskmate-core.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+fs4.workspace = true
+blake3.workspace = true
+tauri = { version = "2", features = ["config-toml", "tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-global-shortcut = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+  "NSPasteboard",
+  "NSPasteboardItem",
+] }
+objc2-core-foundation = { version = "0.3", features = [
+  "CFDictionary",
+  "CFString",
+  "CFNumber",
+] }
+objc2-core-graphics = { version = "0.3", features = [
+  "CGEvent",
+  "CGEventSource",
+  "CGEventTypes",
+  "CGRemoteOperation",
+] }
+objc2-foundation = { version = "0.3", features = [
+  "NSArray",
+  "NSEnumerator",
+  "NSString",
+  "NSURL",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_DataExchange",
+  "Win32_UI_Shell",
+] }

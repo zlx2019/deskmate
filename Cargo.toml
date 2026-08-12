@@ -1,0 +1,71 @@
+### deskmate workspace
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/deskmate-core",
+    "crates/deskmate-cli",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.96.0"
+authors = ["Zero <zero9501@outlook.com>"]
+homepage = "https://github.com/zlx2019/deskmate"
+repository = "https://github.com/zlx2019/deskmate"
+license = "MIT"
+readme = "README.md"
+
+[workspace.dependencies]
+deskmate-core = { path = "crates/deskmate-core" }
+tokio = { version = "1", features = ["full"] }
+rustls = "0.23"
+tokio-rustls = "0.26"
+rustls-pki-types = "1"
+rcgen = "0.14"
+mdns-sd = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+hostname = "0.4"
+os_info = { version = "3", default-features = false }
+fs4 = "1"
+clap = { version = "4", features = ["derive"] }
+socket2 = "0.6"
+ignore = "0.4"
+libc = "0.2"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
+
+### Lint rules
+[workspace.lints.rust]
+unsafe_code = "warn"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+dbg_macro = "warn"
+
+### Production packaging configuration
+# Size-focused: hot paths (BLAKE3/TLS) use SIMD and native code unaffected by
+# opt-level. panic = "abort" is deliberately NOT set — tokio relies on unwinding
+# to isolate task panics, and aborting would turn them into full-process exits.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+strip = true
+
+### Debug packaging configuration
+[profile.dev]

@@ -1,0 +1,3 @@
+/* Simplified-Chinese override for the local-network permission dialog;
+   English systems fall back to the base value in Info.plist. */
+"NSLocalNetworkUsageDescription" = "Deskmate 需要访问本地网络,以便发现同一局域网内的其他设备并传输文件。";

@@ -1,0 +1,597 @@
+/* Deskmate light theme using animal-island-ui.
+   Grass-green page, configurable white panels, deep-green text, and teal accents.
+
+   Color model:
+   Tailwind 4 @theme variables live on :root and utilities resolve through var().
+   animal-island-ui supplies --animal-* variables through main.tsx. Application
+   components use --color-* variables here, while the overrides below align the
+   library variables. This file loads after the library styles. */
+@import "tailwindcss";
+
+@theme {
+  /* Three background layers: page, panel, and raised controls.
+     The six panel variables support color customization. src/theme.ts derives
+     and applies them inline from the selected base color. These static values
+     are the default white-derived fallback. */
+  --color-abyss: #90c9a1;
+  --color-panel: #ffffff;
+  --color-panel-2: #f2f2f2;
+  /* Two line levels. */
+  --color-line: #e3e3e3;
+  --color-line-2: #c7c7c7;
+  /* Two control-border levels for library inputs and similar controls. */
+  --color-edge: #ababab;
+  --color-edge-2: #7a7a7a;
+  /* Map colors: ground, two island levels, roads, and dotted texture. */
+  --color-map: #9ad2a9;
+  --color-isle: #88c597;
+  --color-isle-2: #aadeb8;
+  --color-road: rgba(255, 249, 226, 0.6);
+  --color-dots: rgba(255, 255, 255, 0.4);
+  /* Map tree canopy and trunk colors. */
+  --color-tree: #5ea873;
+  --color-trunk: #a9835a;
+  /* Map scenery: lake and two mountain layers. */
+  --color-water: #b7e0da;
+  --color-hill: #84bb95;
+  --color-hill-2: #a3d4b0;
+  /* Teal primary colors for pulses, online state, actions, and local avatar. */
+  --color-sonar: #19c8b9;
+  --color-sonar-dim: #0fa89b;
+  /* Warm orange for active transfers and emphasis. */
+  --color-ember: #f0a437;
+  /* Alert red aligned with the library error color. */
+  --color-alert: #e05a5a;
+  /* Online green aligned with the library success color. */
+  --color-live: #6fba2c;
+  /* Three text levels: primary, secondary, and muted. */
+  --color-fog: #2f5540;
+  --color-mist: #6e937b;
+  --color-faint: #9fbfa8;
+  /* Light primary background for chips and icon surfaces. */
+  --color-chip: rgba(25, 200, 185, 0.12);
+
+  /* Offline-safe system monospace font for data and labels. */
+  --font-gauge: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+/* animal-island-ui variable overrides for Input, Button, Switch, Progress, and
+   related components. Replace the default cream palette with application colors.
+   Surfaces and borders reference --color-* so panel customization propagates. */
+:root {
+  --animal-bg-color: var(--color-panel);
+  --animal-bg-color-secondary: var(--color-panel-2);
+  --animal-bg-color-disabled: var(--color-panel-2);
+  --animal-text-color: var(--color-fog);
+  --animal-text-color-secondary: var(--color-mist);
+  --animal-text-color-muted: var(--color-fog);
+  --animal-text-color-disabled: var(--color-faint);
+  --animal-border-color: var(--color-edge);
+  --animal-border-color-hover: var(--color-edge-2);
+  --animal-border-color-light: var(--color-line);
+  --animal-shadow-sm: 0 2px 4px 0 rgba(41, 71, 51, 0.06);
+  --animal-shadow-base: 0 3px 10px 0 rgba(41, 71, 51, 0.1);
+  --animal-shadow-lg: 0 8px 24px 0 rgba(41, 71, 51, 0.14);
+}
+
+/* ---------- Dark theme variable overrides ----------
+   src/theme.ts sets data-theme on <html>. Accent colors are shared between
+   themes. Panel-color customization is disabled in dark mode. */
+[data-theme="dark"] {
+  /* Dark gray-purple panel surfaces. */
+  --color-abyss: #262138;
+  --color-panel: #2e2939;
+  --color-panel-2: #383244;
+  --color-line: #453e54;
+  --color-line-2: #574e6a;
+  --color-edge: #776d8f;
+  --color-edge-2: #9a90b5;
+  /* Three pale purple-white text levels. */
+  --color-fog: #ece7f7;
+  --color-mist: #a79dbf;
+  --color-faint: #6e6585;
+  --color-chip: rgba(25, 200, 185, 0.16);
+  /* Night map with deep-purple ground and silhouette scenery. */
+  --color-map: #2b2540;
+  --color-isle: #332c4a;
+  --color-isle-2: #3c3456;
+  --color-road: rgba(255, 255, 255, 0.1);
+  --color-dots: rgba(255, 255, 255, 0.06);
+  --color-tree: #35594a;
+  --color-trunk: #57493c;
+  --color-water: #274357;
+  --color-hill: #3a3352;
+  --color-hill-2: #453d63;
+}
+
+/* Moon and stars appear only in dark mode; clouds become dim silhouettes. */
+.map-night {
+  display: none;
+}
+[data-theme="dark"] .map-night {
+  display: block;
+}
+[data-theme="dark"] .anim-cloud,
+[data-theme="dark"] .anim-cloud-slow {
+  fill: rgba(255, 255, 255, 0.07);
+}
+
+/* Target hard-coded cream library colors that do not use --animal-* variables.
+   Match stable component class prefixes despite build hashes. This covers only
+   the Input shell, primary Button, and inactive Switch track used by Deskmate. */
+/* Input shell: match the hand-rolled fields (textarea/PIN) — one shade below
+   the panel with a themed border, teal on focus. Exactly two states; the
+   library's cream background and hover shadow are removed. */
+[class*="animal-wrapper-"],
+[class*="animal-wrapper-"]:hover {
+  background: var(--color-panel-2);
+  border: 2px solid var(--color-line);
+  box-shadow: none;
+}
+[class*="animal-wrapper-"]:focus-within {
+  border-color: var(--color-sonar);
+}
+/* Input text and placeholder follow the theme instead of the library's cream brown. */
+[class*="animal-input-"] {
+  color: var(--color-fog);
+}
+[class*="animal-input-"]::placeholder {
+  color: var(--color-faint);
+}
+/* Change primary buttons from cream to teal without affecting danger buttons. */
+[class*="animal-btn-primary-"]:not([class*="animal-btn-danger-"]) {
+  background: var(--color-sonar);
+  border-color: var(--color-sonar);
+  color: #fff;
+  box-shadow: 0 5px var(--color-sonar-dim);
+}
+[class*="animal-btn-primary-"]:not([class*="animal-btn-danger-"]):hover:not(:disabled) {
+  background: var(--color-sonar);
+  border-color: var(--color-sonar);
+  box-shadow: 0 6px var(--color-sonar-dim);
+}
+[class*="animal-btn-primary-"]:not([class*="animal-btn-danger-"]):active:not(:disabled) {
+  background: var(--color-sonar-dim);
+  border-color: var(--color-sonar-dim);
+  box-shadow: 0 1px var(--color-sonar-dim);
+}
+[class*="animal-switch-"]:not([class*="animal-switch-checked-"]) {
+  background: var(--color-line-2);
+}
+/* Darken primary buttons and active switches in dark mode. */
+[data-theme="dark"] [class*="animal-btn-primary-"]:not([class*="animal-btn-danger-"]) {
+  background: #10a094;
+  border-color: #10a094;
+  box-shadow: 0 5px #0b6e66;
+}
+[data-theme="dark"]
+  [class*="animal-btn-primary-"]:not([class*="animal-btn-danger-"]):hover:not(:disabled) {
+  background: #10a094;
+  border-color: #10a094;
+  box-shadow: 0 6px #0b6e66;
+}
+[data-theme="dark"]
+  [class*="animal-btn-primary-"]:not([class*="animal-btn-danger-"]):active:not(:disabled) {
+  background: #0b6e66;
+  border-color: #0b6e66;
+  box-shadow: 0 1px #0b6e66;
+}
+[data-theme="dark"] [class*="animal-switch-checked-"] {
+  background: #4e8a24;
+  border-color: #3f7020;
+}
+[data-theme="dark"]
+  [class*="animal-switch-checked-"]:hover:not([class*="animal-switch-disabled-"]) {
+  background: #4e8a24;
+  border-color: #3f7020;
+}
+/* Change the Progress track from cream to pale green; keep its teal fill. */
+[class*="animal-track-"] {
+  background: var(--color-panel-2);
+}
+/* Use pale green for unchecked Radio and Checkbox controls and reinforce teal
+   for checked state with higher specificity. */
+[class*="animal-cbx-"] input[type="radio"],
+[class*="animal-cbx-"] input[type="checkbox"] {
+  background: var(--color-panel-2);
+}
+[class*="animal-checked-"] [class*="animal-cbx-"] input[type="radio"],
+[class*="animal-checked-"] [class*="animal-cbx-"] input[type="checkbox"] {
+  background: var(--color-sonar);
+}
+/* Replace hard-coded warm-brown Radio and Checkbox labels with theme text colors. */
+[class*="animal-label-"] {
+  color: var(--color-mist);
+}
+[class*="animal-checked-"] [class*="animal-label-"] {
+  color: var(--color-fog);
+}
+[class*="animal-disabled-"] [class*="animal-label-"] {
+  color: var(--color-faint);
+}
+/* Align Select trigger, border, text, and menu surfaces with the theme.
+   Match the library's .trigger.open specificity for the expanded state. */
+[class*="animal-trigger-"],
+[class*="animal-trigger-"][class*="animal-open-"] {
+  border-color: var(--color-line);
+  background: var(--color-panel);
+}
+[class*="animal-disabled-"] [class*="animal-trigger-"] {
+  background: var(--color-panel-2);
+}
+[class*="animal-trigger-"]:hover {
+  border-color: var(--color-line-2);
+  background: var(--color-panel);
+}
+[class*="animal-value-"] {
+  color: var(--color-fog);
+}
+[class*="animal-placeholder-"] {
+  color: var(--color-mist);
+}
+[class*="animal-dropdown-"] {
+  background: var(--color-panel);
+  border: 2px solid var(--color-line);
+  box-shadow: 0 8px 24px rgba(41, 71, 51, 0.14);
+}
+[class*="animal-option-"] {
+  color: var(--color-fog);
+}
+[class*="animal-pillBar-"] {
+  background: var(--color-sonar);
+}
+/* Use panel colors for Notification shells while preserving semantic borders
+   and icon backgrounds for success, error, and related variants. */
+[class*="animal-notification-"] {
+  background: var(--color-panel);
+  color: var(--color-fog);
+}
+[class*="animal-notification-"]:not([class*="animal-type-"]) {
+  border-color: var(--color-line-2);
+}
+/* Replace hard-coded warm-brown Notification text with readable theme colors. */
+[class*="animal-notification-"] [class*="animal-title-"] {
+  color: var(--color-fog);
+}
+[class*="animal-notification-"] [class*="animal-description-"] {
+  color: var(--color-mist);
+}
+/* The library Select menu opens sideways by default. Force the composer's peer
+   menu directly above the trigger at matching width, overriding inline position. */
+.composer-select [class*="animal-wrapper-"] {
+  display: block;
+  min-width: 0;
+  background: transparent;
+}
+.composer-select [class*="animal-dropdown-"] {
+  left: 0 !important;
+  right: 0 !important;
+  top: auto !important;
+  bottom: 100% !important;
+  margin: 0 0 6px !important;
+  transform: none !important;
+  /* Scroll internally when many peers are online. */
+  max-height: 240px;
+  overflow-y: auto;
+}
+/* Move the library hover pointer inside the full-width menu so scrolling does
+   not clip it at the left edge. */
+.composer-select [class*="animal-option-"]:hover::before {
+  left: 16px;
+}
+
+/* ---------- Shared library Tabs appearance (.dm-tabs) ----------
+   Used by the transfer panel and settings dialog. Layout-specific rules follow
+   under .transfer-tabs and .settings-tabs. */
+.dm-tabs[class*="animal-tabs-"] {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+/* Tighten tab-row spacing and replace cream colors with theme lines. */
+.dm-tabs [class*="animal-tabList-"] {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  background: transparent;
+  border-bottom: 2px solid var(--color-line);
+}
+.dm-tabs [class*="animal-tabItem-"] {
+  padding: 6px 12px;
+  font-size: 12px;
+  /* Replace the hard-coded unselected warm brown with secondary text color. */
+  color: var(--color-mist);
+}
+/* Hide library circle markers for text-only tabs while retaining the selected leaf. */
+.dm-tabs [class*="animal-tabIcon-"] {
+  display: none;
+}
+.dm-tabs [class*="animal-tabItem-"]:hover {
+  color: var(--color-fog);
+}
+/* Align selected tabs with the theme primary color and white text. */
+.dm-tabs [class*="animal-tabItem-"][aria-selected="true"] {
+  background: var(--color-sonar);
+  color: #fff;
+}
+.dm-tabs [aria-selected="true"] [class*="animal-tabLabel-"] {
+  color: #fff;
+}
+/* Invert count-badge colors in the selected tab. */
+.dm-tabs [aria-selected="true"] .tab-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+/* Soften selected tabs in dark mode with a translucent teal chip. */
+[data-theme="dark"] .dm-tabs [class*="animal-tabItem-"][aria-selected="true"] {
+  background: rgba(25, 200, 185, 0.16);
+  color: var(--color-sonar);
+}
+[data-theme="dark"] .dm-tabs [aria-selected="true"] [class*="animal-tabLabel-"] {
+  color: var(--color-sonar);
+}
+[data-theme="dark"] .dm-tabs [aria-selected="true"] .tab-badge {
+  background: rgba(25, 200, 185, 0.22);
+  color: var(--color-sonar);
+}
+/* Remove the library's large content padding; sections provide their own spacing. */
+.dm-tabs [class*="animal-tabContent-"] {
+  padding: 0;
+  min-height: 0;
+}
+.dm-tabs [class*="animal-tabContentInner-"] {
+  min-height: 0;
+}
+
+/* Transfer-panel layout: upper flex column with scrolling delegated to content. */
+.transfer-tabs[class*="animal-tabs-"] {
+  display: flex;
+  flex-direction: column;
+}
+.transfer-tabs [class*="animal-tabContent-"] {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Settings layout: fixed content height prevents dialog jumps between sections. */
+.settings-tabs [class*="animal-tabContent-"] {
+  height: 360px;
+  overflow-y: auto;
+}
+
+/* ---------- Library Card and status Tag for transfer/history entries ---------- */
+/* Compress poster-sized Card padding, replace warm-brown text, add an outline,
+   and derive the dotted pattern from the configurable panel palette. */
+.transfer-card[class*="animal-card-"] {
+  padding: 10px 12px;
+  border: 2px solid var(--color-line);
+  color: inherit;
+  font-weight: inherit;
+  background:
+    radial-gradient(
+      circle,
+      color-mix(in srgb, var(--color-line-2) 30%, transparent) 1.5px,
+      transparent 1.5px
+    ),
+    radial-gradient(
+      circle,
+      color-mix(in srgb, var(--color-line-2) 18%, transparent) 1px,
+      transparent 1px
+    ),
+    var(--color-panel-2);
+  background-size:
+    28px 28px,
+    14px 14px;
+  background-position:
+    0 0,
+    7px 7px;
+}
+/* Replace the default soft Tag cream with muted green; preserve semantic colors. */
+[class*="animal-tag-"][class*="animal-variant-soft-"]:not([class*="animal-color-"]) {
+  background: var(--color-panel-2);
+  color: var(--color-mist);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background-color: var(--color-abyss);
+  /* Dotted ground texture visible only where panels do not cover the page. */
+  background-image: radial-gradient(var(--color-dots) 1.2px, transparent 1.3px);
+  background-size: 24px 24px;
+  color: var(--color-fog);
+  /* Prefer bundled Nunito, then fall back to system sans-serif fonts. */
+  font-family:
+    "Nunito", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+    system-ui, sans-serif;
+  /* Disable selection by default for a desktop-app feel; inputs opt back in. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ---------- Animations ---------- */
+
+/* Center sonar: two offset expanding discovery rings. */
+@keyframes sonar-wave {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+/* Peer arrival pop using the dmpop easing curve. */
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Peer departure shrink and fade. */
+@keyframes pop-out {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.1);
+  }
+}
+
+/* Arrival ring expanding from the landing point. */
+@keyframes ring-burst {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* Idle peer-bubble bobbing. */
+@keyframes bob {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+/* Drag-hover target ripple. */
+@keyframes ping-ring {
+  0% {
+    transform: scale(0.45);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+/* Dialog float-in. */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Backdrop fade-in. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Status-dot breathing. */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Slow cloud drift across the map. */
+@keyframes cloud-drift {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(26px);
+  }
+}
+
+.anim-sonar-wave {
+  animation: sonar-wave 2.4s ease-out infinite;
+}
+.anim-pop-in {
+  animation: pop-in 0.55s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+.anim-pop-out {
+  animation: pop-out 0.38s cubic-bezier(0.5, 0, 0.7, 0.3) both;
+}
+.anim-ring-burst {
+  animation: ring-burst 1s ease-out both;
+}
+.anim-bob {
+  animation: bob 3.4s ease-in-out infinite;
+}
+.anim-ping-ring {
+  animation: ping-ring 1.6s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+.anim-fade-up {
+  animation: fade-up 0.22s ease-out both;
+}
+.anim-fade-in {
+  animation: fade-in 0.18s ease-out both;
+}
+.anim-breathe {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.anim-cloud {
+  animation: cloud-drift 26s ease-in-out infinite;
+}
+.anim-cloud-slow {
+  animation: cloud-drift 38s ease-in-out infinite reverse;
+}
+
+/* Instrument labels with uppercase text and wide letter spacing. */
+.gauge-label {
+  font-family: var(--font-gauge);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-mist);
+}
+
+/* Consistent panel scrollbars inside the WebView. */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line-2);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

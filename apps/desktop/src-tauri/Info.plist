@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- macOS 15+ local network permission: Without this declaration, mDNS will silently fail (key item in the solution risk table). -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Deskmate needs to access the local network to discover other devices on the same LAN and transfer files.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_deskmate._tcp</string>
+    </array>
+    <!-- Declares bundled localizations so the permission dialog picks zh-Hans on Chinese systems. -->
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
+</dict>
+</plist>
