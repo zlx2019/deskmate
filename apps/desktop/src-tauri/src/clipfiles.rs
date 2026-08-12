@@ -1,9 +1,10 @@
-//! Clipboard file-list reader: extracts absolute paths for files copied to the
-//! system clipboard so hotkey sends can reuse the existing file-transfer flow.
+//! Clipboard file-list reader/writer: file references copied to or from the
+//! system clipboard, shared by hotkey sends and receive-side auto copy.
 //!
 //! The Tauri clipboard plugin only supports text and images. File references
 //! use platform-specific formats: macOS `public.file-url` and Windows
-//! `CF_HDROP`. Linux is currently unsupported and returns an empty list.
+//! `CF_HDROP`. Linux is currently unsupported: reads return an empty list and
+//! writes report failure.
 
 /// Reads file paths copied to the clipboard.
 ///
@@ -17,11 +18,40 @@ pub fn read_file_paths() -> Vec<String> {
         .collect()
 }
 
+/// Writes pasteable file references to the clipboard, replacing its contents.
+///
+/// Pasting in a file manager copies the referenced files, so the originals in
+/// the download directory remain. Returns false when nothing was written or
+/// the platform is unsupported.
+pub fn write_file_paths(paths: &[std::path::PathBuf]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    platform::write_raw(paths)
+}
+
 /// macOS implementation: converts each NSPasteboard file URL to a filesystem path.
 #[cfg(target_os = "macos")]
 mod platform {
-    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
-    use objc2_foundation::NSURL;
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardWriting};
+    use objc2_foundation::{NSArray, NSString, NSURL};
+
+    /// Replaces the clipboard with file URLs via writeObjects.
+    pub fn write_raw(paths: &[std::path::PathBuf]) -> bool {
+        objc2::rc::autoreleasepool(|_| {
+            let urls: Vec<_> = paths
+                .iter()
+                .map(|p| {
+                    let url = NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy()));
+                    ProtocolObject::<dyn NSPasteboardWriting>::from_retained(url)
+                })
+                .collect();
+            let pasteboard = NSPasteboard::generalPasteboard();
+            pasteboard.clearContents();
+            pasteboard.writeObjects(&NSArray::from_retained_slice(&urls))
+        })
+    }
 
     pub fn read_raw() -> Vec<String> {
         // AppKit calls run on a blocking thread without an autorelease pool.
@@ -52,12 +82,76 @@ mod platform {
 #[cfg(target_os = "windows")]
 mod platform {
     use windows_sys::Win32::System::DataExchange::{
-        CloseClipboard, GetClipboardData, OpenClipboard,
+        CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
     };
-    use windows_sys::Win32::UI::Shell::{DragQueryFileW, HDROP};
+    use windows_sys::Win32::System::Memory::{
+        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
+    };
+    // GlobalFree lives in Foundation in windows-sys 0.61, not System::Memory.
+    use windows_sys::Win32::Foundation::GlobalFree;
+    use windows_sys::Win32::UI::Shell::{DROPFILES, DragQueryFileW, HDROP};
 
     /// CF_HDROP clipboard format ID for file lists, as defined by winuser.h.
     const CF_HDROP: u32 = 15;
+
+    /// Replaces the clipboard with a CF_HDROP file list.
+    pub fn write_raw(paths: &[std::path::PathBuf]) -> bool {
+        use std::os::windows::ffi::OsStrExt;
+        // Wide path list: each path null-terminated, list double-terminated.
+        let mut wide: Vec<u16> = Vec::new();
+        for p in paths {
+            wide.extend(p.as_os_str().encode_wide());
+            wide.push(0);
+        }
+        wide.push(0);
+
+        let header = std::mem::size_of::<DROPFILES>();
+        let total = header + wide.len() * 2;
+        unsafe {
+            let handle = GlobalAlloc(GMEM_MOVEABLE, total);
+            if handle.is_null() {
+                return false;
+            }
+            let base = GlobalLock(handle);
+            if base.is_null() {
+                GlobalFree(handle);
+                return false;
+            }
+            let drop = base.cast::<DROPFILES>();
+            (*drop).pFiles = header as u32;
+            (*drop).pt.x = 0;
+            (*drop).pt.y = 0;
+            (*drop).fNC = 0;
+            // fWide selects the UTF-16 list layout written below.
+            (*drop).fWide = 1;
+            std::ptr::copy_nonoverlapping(
+                wide.as_ptr(),
+                base.cast::<u8>().add(header).cast::<u16>(),
+                wide.len(),
+            );
+            GlobalUnlock(handle);
+
+            // The source application may briefly hold the clipboard open.
+            for attempt in 0..4 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                if OpenClipboard(std::ptr::null_mut()) == 0 {
+                    continue;
+                }
+                EmptyClipboard();
+                // On success the system owns the memory; free it only on failure.
+                let ok = !SetClipboardData(CF_HDROP, handle).is_null();
+                CloseClipboard();
+                if !ok {
+                    GlobalFree(handle);
+                }
+                return ok;
+            }
+            GlobalFree(handle);
+            false
+        }
+    }
 
     pub fn read_raw() -> Vec<String> {
         // The source application may briefly retain the clipboard after a copy.
@@ -108,5 +202,9 @@ mod platform {
 mod platform {
     pub fn read_raw() -> Vec<String> {
         Vec::new()
+    }
+
+    pub fn write_raw(_paths: &[std::path::PathBuf]) -> bool {
+        false
     }
 }

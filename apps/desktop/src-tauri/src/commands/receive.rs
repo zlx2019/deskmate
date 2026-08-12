@@ -26,6 +26,12 @@ pub fn respond_offer(
         .remove(&offer_id)
         .ok_or_else(|| ErrDto::new("offer_expired"))?;
     let decision = if accept {
+        // Register the effective save directory for receive-side auto copy.
+        let effective = save_dir
+            .clone()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| lock(&state.settings).download_dir.clone());
+        lock(&state.accepted_save_dirs).insert(pending.transfer_id.clone(), effective);
         OfferDecision::Accept {
             accepted_files: pending.file_ids,
             save_dir: save_dir.map(PathBuf::from),

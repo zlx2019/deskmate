@@ -216,6 +216,12 @@ export const zh = {
     styleDark: "夜晚",
     panelColor: "背景颜色",
     autoCopy: "自动复制",
+    autoCopyKinds: {
+      text: "文本",
+      image: "截图",
+      file: "文件",
+      dir: "文件夹",
+    },
     ignoreRules: "传输忽略规则",
     ignoreRulesHint: "gitignore 语法, 每行一条; 匹配的文件不会被发送(发送目录时同样生效)。",
     ignoreRulesPlaceholder: ".DS_Store\nnode_modules/\n*.log",
