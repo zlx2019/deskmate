@@ -1051,7 +1051,7 @@ dependencies = [
 
 [[package]]
 name = "deskmate-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1062,7 +1062,7 @@ dependencies = [
 
 [[package]]
 name = "deskmate-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "hostname",
@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "deskmate-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "blake3",
