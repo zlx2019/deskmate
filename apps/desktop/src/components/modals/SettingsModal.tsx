@@ -378,6 +378,11 @@ export function SettingsModal({
                     checked={settings.autostart}
                     onChange={(v) => setSettings({ ...settings, autostart: v })}
                   />
+                  <ToggleRow
+                    label={t.settings.notifications}
+                    checked={settings.notifications}
+                    onChange={(v) => setSettings({ ...settings, notifications: v })}
+                  />
                 </div>
 
                 {/* Auto copy is controlled by the kind selection alone; an

@@ -82,6 +82,8 @@ export interface Settings {
   passive: boolean;
   /** Launch at system startup. */
   autostart: boolean;
+  /** Master switch for system notifications. */
+  notifications: boolean;
   /** Trusted-device allowlist for automatic acceptance. */
   trusted: TrustedDevice[];
   /** Optional pairing PIN required for incoming files and text. */

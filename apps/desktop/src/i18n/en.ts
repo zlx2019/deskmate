@@ -213,6 +213,7 @@ export const en = {
     ignoreRulesHint: "gitignore syntax, one rule per line; matching files are never sent (applies when sending folders too).",
     ignoreRulesPlaceholder: ".DS_Store\nnode_modules/\n*.log",
     autostart: "Launch at login",
+    notifications: "System notifications",
     fingerprint: "device fingerprint",
     copyHint: "Click to copy",
     nickname: "Nickname",

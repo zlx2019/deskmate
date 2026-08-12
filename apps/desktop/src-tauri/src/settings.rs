@@ -108,6 +108,9 @@ pub struct Settings {
     pub passive: bool,
     /// Launch at system startup.
     pub autostart: bool,
+    /// Master switch for system notifications; disabling suppresses all
+    /// banners (incoming data, transfer results) but keeps the unread badge.
+    pub notifications: bool,
     /// Trusted-device allowlist for automatic acceptance.
     pub trusted: Vec<TrustedDevice>,
     /// Optional pairing PIN required for incoming files and text.
@@ -142,6 +145,7 @@ impl Default for Settings {
             avatar: None,
             passive: false,
             autostart: false,
+            notifications: true,
             trusted: Vec::new(),
             pin: None,
             auto_copy_text: false,
@@ -209,6 +213,8 @@ mod tests {
         );
         assert_eq!(s.copy_send_hotkey.as_deref(), Some("CmdOrCtrl+Shift+X"));
         assert_eq!(s.ignore_rules, DEFAULT_IGNORE_RULES);
+        // Upgrades from versions without the switch keep notifications on.
+        assert!(s.notifications);
         // Pre-1.5 users with the switch on copied text; the default keeps that.
         assert_eq!(s.auto_copy_kinds, vec![AutoCopyKind::Text]);
     }

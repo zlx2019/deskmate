@@ -226,6 +226,7 @@ export const zh = {
     ignoreRulesHint: "gitignore 语法, 每行一条; 匹配的文件不会被发送(发送目录时同样生效)。",
     ignoreRulesPlaceholder: ".DS_Store\nnode_modules/\n*.log",
     autostart: "开机自启",
+    notifications: "系统通知",
     fingerprint: "device fingerprint",
     copyHint: "点击复制",
     nickname: "昵称",
