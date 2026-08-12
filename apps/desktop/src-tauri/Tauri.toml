@@ -10,7 +10,11 @@ frontendDist = "../dist"
 
 [app]
 [app.security]
-csp = "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'"
+# connect-src must allow the raw-binary IPC fetch (ipc: on macOS/Linux,
+# http://ipc.localhost on Windows). Without it the packaged app silently falls
+# back to the postMessage channel, which cannot carry raw bodies, breaking
+# screenshot sends. blob: covers copy-image fetching message-stream Blob URLs.
+csp = "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost blob:; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'"
 
 [[app.windows]]
 title = "Deskmate"
