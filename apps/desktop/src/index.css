@@ -262,6 +262,9 @@
   display: block;
   min-width: 0;
   background: transparent;
+  /* The input-shell override paints wrappers; the Select trigger already has
+     its own border, so drop the outer one to avoid a double frame. */
+  border: none;
 }
 .composer-select [class*="animal-dropdown-"] {
   left: 0 !important;
