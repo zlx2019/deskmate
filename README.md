@@ -65,7 +65,7 @@ pnpm tauri dev     # run the desktop app with hot reload
 pnpm tauri build   # produce installers for the current platform
 ```
 
-The engine is a UI-free Rust library (`crates/deskmate-core`) shared by the desktop app and a CLI (`crates/deskmate-cli`) that is handy for protocol debugging:
+The engine is a UI-free Rust library (`deps/deskmate-core`) shared by the desktop app and a CLI (`deps/deskmate-cli`) that is handy for protocol debugging:
 
 ```bash
 cargo run -p deskmate-cli -- listen    # act as a receiver

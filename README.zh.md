@@ -66,7 +66,7 @@ pnpm tauri dev     # 开发模式(热更新)
 pnpm tauri build   # 产出当前平台安装包
 ```
 
-引擎是一个不依赖 UI 的 Rust 库(`crates/deskmate-core`),桌面端与 CLI(`crates/deskmate-cli`)共用,后者适合协议联调:
+引擎是一个不依赖 UI 的 Rust 库(`deps/deskmate-core`),桌面端与 CLI(`deps/deskmate-cli`)共用,后者适合协议联调:
 
 ```bash
 cargo run -p deskmate-cli -- listen    # 作为接收端

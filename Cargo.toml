@@ -3,8 +3,8 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/deskmate-core",
-    "crates/deskmate-cli",
+    "deps/deskmate-core",
+    "deps/deskmate-cli",
     "apps/desktop/src-tauri",
 ]
 
@@ -19,7 +19,7 @@ license = "MIT"
 readme = "README.md"
 
 [workspace.dependencies]
-deskmate-core = { path = "crates/deskmate-core" }
+deskmate-core = { path = "deps/deskmate-core" }
 tokio = { version = "1", features = ["full"] }
 rustls = "0.23"
 tokio-rustls = "0.26"
