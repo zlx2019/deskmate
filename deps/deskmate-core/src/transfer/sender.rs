@@ -54,6 +54,9 @@ pub struct SendSummary {
 /// - `transfer_id`: `Some` uses a caller-generated task ID for preregistering
 ///   controls; `None` generates one internally. Both return it in [`SendSummary`].
 /// - `pin`: required when the peer enables pairing PIN protection.
+/// - `paths`: files or directories to send; `inline_image` marks every
+///   manifest entry as a clipboard image for inline display on the peer
+///   (protocol 1.5; callers only set it for single-image clipboard sends).
 /// - `ignore`: optional gitignore-style transfer rules.
 /// - `control`: local pause, resume, and cancel channel.
 /// - `events`: progress and result event stream.
@@ -69,6 +72,7 @@ pub async fn send_files(
     transfer_id: Option<String>,
     pin: Option<String>,
     paths: &[PathBuf],
+    inline_image: bool,
     ignore: Option<&IgnoreRules>,
     control: watch::Receiver<ControlState>,
     events: mpsc::Sender<TransferEvent>,
@@ -77,7 +81,7 @@ pub async fn send_files(
 
     // Collect and number the manifest.
     let entries = collect_files_blocking(paths, ignore).await?;
-    let files = build_manifest(&entries);
+    let files = build_manifest(&entries, inline_image);
     let total_size: u64 = files.iter().map(|f| f.size).sum();
     let transfer_id = transfer_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
@@ -127,7 +131,7 @@ async fn collect_files_blocking(
 }
 
 /// Numbers collected files in order and converts them to protocol metadata.
-fn build_manifest(entries: &[(PathBuf, String, u64)]) -> Vec<FileMeta> {
+fn build_manifest(entries: &[(PathBuf, String, u64)], inline_image: bool) -> Vec<FileMeta> {
     entries
         .iter()
         .enumerate()
@@ -135,6 +139,7 @@ fn build_manifest(entries: &[(PathBuf, String, u64)]) -> Vec<FileMeta> {
             file_id: u32::try_from(i).unwrap_or(u32::MAX),
             rel_path: rel.clone(),
             size: *size,
+            inline_image,
         })
         .collect()
 }
@@ -602,6 +607,8 @@ async fn push_data(
             transfer_id: transfer_id.to_string(),
             file_id: item.file_id,
             path: item.abs_path.clone(),
+            // The marker only matters where the file arrives; senders report false.
+            inline_image: false,
         })
         .await;
         files_sent += 1;

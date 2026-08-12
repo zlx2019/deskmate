@@ -63,6 +63,8 @@ export const en = {
     hotkey_conflict: "Hotkey registration failed (possibly conflicting)",
     ignore_rules_invalid: "Invalid ignore rule syntax",
     avatar_empty: "Image data is empty",
+    inline_image_unavailable: "Image message cannot be read",
+    inline_image_too_large: "Image too large, saved as a file only",
     internal: "Internal error",
   },
 

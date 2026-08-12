@@ -47,7 +47,7 @@ export interface OfferDto {
 /** Transfer lifecycle event distinguished by kind. */
 export type TransferEventDto =
   | { kind: "progress"; transferId: string; fileId: number; relPath: string; done: number; size: number }
-  | { kind: "fileCompleted"; transferId: string; fileId: number; path: string }
+  | { kind: "fileCompleted"; transferId: string; fileId: number; path: string; inlineImage: boolean }
   | { kind: "completed"; transferId: string }
   | { kind: "cancelled"; transferId: string }
   | { kind: "interrupted"; transferId: string; reason: string; code: string; detail: string | null }
@@ -170,8 +170,15 @@ export interface TextMsg {
   direction: "in" | "out";
   /** Peer name, either the source or destination. */
   peerName: string;
+  /** Text content; the file name for image messages. */
   text: string;
   at: number;
+  /** Inline clipboard image rendered as a chat bubble instead of text. */
+  image?: {
+    /** Blob URL owned by the message stream and revoked on removal. */
+    url: string;
+    name: string;
+  };
 }
 
 /** Formats byte counts, for example 1536 as "1.5 KB". */

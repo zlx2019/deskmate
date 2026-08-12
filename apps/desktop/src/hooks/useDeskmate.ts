@@ -37,6 +37,30 @@ function runningStatus(pausedLocal?: boolean, pausedByPeer?: boolean): "active" 
   return pausedLocal || pausedByPeer ? "paused" : "active";
 }
 
+/** Generates a collision-safe message-stream ID. */
+function msgId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Appends a message chat-style (newest last) with the shared 50-entry cap,
+ * revoking image URLs of evicted entries so long sessions cannot accumulate
+ * Blob memory. */
+function pushMsg(prev: TextMsg[], msg: TextMsg): TextMsg[] {
+  const next = [...prev, msg];
+  for (const evicted of next.slice(0, -50)) {
+    if (evicted.image) URL.revokeObjectURL(evicted.image.url);
+  }
+  return next.slice(-50);
+}
+
+/** Wraps image bytes in a Blob URL for message-stream display. */
+function imageBlobUrl(bytes: Uint8Array | ArrayBuffer): string {
+  // Copying through a fresh Uint8Array satisfies BlobPart's ArrayBuffer-backed
+  // view requirement regardless of the source buffer type.
+  const part = bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes);
+  return URL.createObjectURL(new Blob([part], { type: "image/png" }));
+}
+
 /** Builds a reducer that folds per-file engine events into panel entries.
  *
  * The injected speed-sample map follows the component lifecycle instead of
@@ -202,6 +226,17 @@ export function useDeskmate() {
   // A ref provides pre-event aggregate state when reporting terminal history.
   const transfersRef = useRef(transfers);
   transfersRef.current = transfers;
+  // Current messages for removal callbacks and unmount image-URL cleanup.
+  const textsRef = useRef(texts);
+  textsRef.current = texts;
+  useEffect(
+    () => () => {
+      for (const m of textsRef.current) {
+        if (m.image) URL.revokeObjectURL(m.image.url);
+      }
+    },
+    [],
+  );
   // Track loading and loaded avatar hashes to prevent duplicate requests.
   const avatarSeen = useRef(new Set<string>());
   // Revoke all Blob URLs on unmount; stale avatar URLs remain small during a session.
@@ -295,18 +330,39 @@ export function useDeskmate() {
         const ev = e.payload;
         if (ev.kind === "textReceived") {
           setTexts((prev) =>
-            [
-              {
-                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                direction: "in" as const,
-                peerName: ev.fromName,
-                text: ev.text,
-                at: Date.now(),
-              },
-              ...prev,
-            ].slice(0, 50),
+            pushMsg(prev, {
+              id: msgId(),
+              direction: "in",
+              peerName: ev.fromName,
+              text: ev.text,
+              at: Date.now(),
+            }),
           );
         } else {
+          // Received clipboard images additionally surface as chat bubbles.
+          // The path was authorized by the event pump; failures degrade to the
+          // regular file entry in the transfer panel.
+          if (ev.kind === "fileCompleted" && ev.inlineImage) {
+            const peerName =
+              transfersRef.current[ev.transferId]?.peerName ?? getLocale().transfer.unknownPeer;
+            const name = ev.path.split(/[\\/]/).pop() ?? "image.png";
+            api
+              .readInlineImage(ev.path)
+              .then((buf) => {
+                const url = imageBlobUrl(buf);
+                setTexts((prev) =>
+                  pushMsg(prev, {
+                    id: msgId(),
+                    direction: "in",
+                    peerName,
+                    text: name,
+                    at: Date.now(),
+                    image: { url, name },
+                  }),
+                );
+              })
+              .catch((e) => console.error("Failed to load inline image:", e));
+          }
           dispatch({ type: "event", event: ev, at: Date.now() });
           // Surface failures in the in-app notification tray. The transfer ID
           // keys each toast so duplicate terminal DTOs (engine event plus send
@@ -469,26 +525,45 @@ export function useDeskmate() {
   /** Records successfully sent text in the message stream. */
   const addSentText = useCallback((peerName: string, text: string) => {
     setTexts((prev) =>
-      [
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          direction: "out" as const,
-          peerName,
-          text,
-          at: Date.now(),
-        },
-        ...prev,
-      ].slice(0, 50),
+      pushMsg(prev, {
+        id: msgId(),
+        direction: "out",
+        peerName,
+        text,
+        at: Date.now(),
+      }),
     );
   }, []);
 
-  /** Deletes one in-memory text message. */
+  /** Records a successfully sent clipboard image as an outgoing chat bubble. */
+  const addSentImage = useCallback((peerName: string, name: string, bytes: Uint8Array) => {
+    const url = imageBlobUrl(bytes);
+    setTexts((prev) =>
+      pushMsg(prev, {
+        id: msgId(),
+        direction: "out",
+        peerName,
+        text: name,
+        at: Date.now(),
+        image: { url, name },
+      }),
+    );
+  }, []);
+
+  /** Deletes one in-memory text message, releasing its image URL. */
   const removeText = useCallback((id: string) => {
+    const gone = textsRef.current.find((m) => m.id === id);
+    if (gone?.image) URL.revokeObjectURL(gone.image.url);
     setTexts((prev) => prev.filter((m) => m.id !== id));
   }, []);
 
-  /** Clears all in-memory text messages. */
-  const clearTexts = useCallback(() => setTexts([]), []);
+  /** Clears all in-memory text messages, releasing their image URLs. */
+  const clearTexts = useCallback(() => {
+    for (const m of textsRef.current) {
+      if (m.image) URL.revokeObjectURL(m.image.url);
+    }
+    setTexts([]);
+  }, []);
 
   /** Reloads local-device information and any updated avatar after settings save. */
   const refreshSelf = () => {
@@ -516,6 +591,7 @@ export function useDeskmate() {
     getPin,
     rememberPin,
     addSentText,
+    addSentImage,
     removeText,
     clearTexts,
     refreshSelf,

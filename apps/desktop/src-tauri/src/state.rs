@@ -33,6 +33,8 @@ pub struct InterruptedSend {
     /// Ignore-rule snapshot captured when sending. Resumption reuses it so
     /// mid-transfer rule changes cannot desynchronize the manifest.
     pub ignore_rules: String,
+    /// Clipboard-image marker preserved so PIN retries keep inline display.
+    pub inline_image: bool,
 }
 
 /// Interrupted task map: transfer ID to sender-side resumption parameters.
@@ -68,6 +70,10 @@ pub struct AppState {
     /// whichever inserts first sends the single notification. Retries remove
     /// their ID so a repeated failure notifies again.
     pub failure_notified: Mutex<HashSet<String>>,
+    /// Final paths of received inline clipboard images. read_inline_image only
+    /// serves paths registered here, so the frontend can never read arbitrary
+    /// files. Session-scoped and small: one entry per received screenshot.
+    pub inline_image_paths: Mutex<HashSet<PathBuf>>,
 }
 
 /// Locks a standard mutex, recovering the inner data if it was poisoned.

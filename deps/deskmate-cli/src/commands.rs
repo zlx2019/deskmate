@@ -167,6 +167,8 @@ pub async fn cmd_send(common: &CommonArgs, paths: Vec<PathBuf>, target: &str) ->
         // The CLI does not currently support PINs; a PIN-enabled peer returns a clear error.
         None,
         &paths,
+        // The CLI never sends clipboard images, so nothing is marked inline.
+        false,
         // The CLI does not apply ignore rules; this integration tool sends every selected item.
         None,
         control,

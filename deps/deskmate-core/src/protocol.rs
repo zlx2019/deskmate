@@ -87,6 +87,19 @@ pub struct FileMeta {
     pub rel_path: String,
     /// File size in bytes.
     pub size: u64,
+    /// Marks a clipboard image intended for inline display in the peer's
+    /// message stream, in addition to the normal file save.
+    ///
+    /// Added in protocol 1.5. Older versions ignore the field and receive a
+    /// regular file. Untrusted like every peer field: receivers must cap the
+    /// bytes they load back for display.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub inline_image: bool,
+}
+
+/// Serde helper keeping default `false` flags out of the wire format.
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 /// Per-file resume state in a `ResumeInfo` manifest.
@@ -330,6 +343,7 @@ mod tests {
                     file_id: 0,
                     rel_path: "a/b.txt".into(),
                     size: 42,
+                    inline_image: true,
                 }],
                 total_size: 42,
                 pin: Some("1234".into()),
@@ -375,6 +389,25 @@ mod tests {
                 .unwrap()
                 .contains("reason_code")
         );
+    }
+
+    /// Legacy file metadata without `inline_image` remains parseable, and the
+    /// default `false` is not serialized to protect 1.5 backward compatibility.
+    #[test]
+    fn file_meta_inline_image_is_backward_compatible() {
+        let legacy = r#"{"file_id":0,"rel_path":"a.png","size":7}"#;
+        let meta: FileMeta = serde_json::from_str(legacy).unwrap();
+        assert!(!meta.inline_image);
+
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(!json.contains("inline_image"));
+
+        let marked = FileMeta {
+            inline_image: true,
+            ..meta
+        };
+        let json = serde_json::to_string(&marked).unwrap();
+        assert!(json.contains(r#""inline_image":true"#));
     }
 
     /// Legacy peer information without avatar or OS version remains parseable,

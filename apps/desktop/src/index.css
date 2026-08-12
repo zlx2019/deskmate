@@ -588,6 +588,14 @@ textarea {
   width: 8px;
   height: 8px;
 }
+/* Thinner bar for long-text message bubbles; the scroll area nests inside the
+   bubble padding so the bar keeps a margin from the border. */
+.bubble-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.bubble-scroll::-webkit-scrollbar-thumb {
+  border-radius: 2px;
+}
 *::-webkit-scrollbar-thumb {
   background: var(--color-line-2);
   border-radius: 4px;

@@ -161,6 +161,7 @@ export default function App() {
             onResume={dm.resumeTransfer}
             onPinLearned={dm.rememberPin}
             onTextSent={dm.addSentText}
+            onImageSent={dm.addSentImage}
             onSendImage={dm.sendClipboardImage}
             onSendFiles={dm.sendFiles}
             onRemoveText={dm.removeText}
@@ -192,6 +193,7 @@ export default function App() {
           }}
           onSendImage={dm.sendClipboardImage}
           onTextSent={dm.addSentText}
+          onImageSent={dm.addSentImage}
           onClose={() => setActivePeer(null)}
         />
       )}

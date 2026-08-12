@@ -50,6 +50,8 @@ export const api = {
     invoke<number[] | null>("get_avatar_image", { hash: hash ?? null }),
   /** Sends a system notification when the window is unfocused. */
   notify: (title: string, body: string) => invoke<void>("notify", { title, body }),
+  /** Reads a received inline clipboard image as raw bytes for chat display. */
+  readInlineImage: (path: string) => invoke<ArrayBuffer>("read_inline_image", { path }),
   /** Stages screenshot bytes through raw IPC and returns a staging ID. */
   stageClipboardImage: (data: Uint8Array) => invoke<string>("stage_clipboard_image", data),
   /** Sends a staged screenshot through the file-transfer flow. */
