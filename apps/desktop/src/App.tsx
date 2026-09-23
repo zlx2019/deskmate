@@ -15,7 +15,6 @@ import {
   PinModal,
   SettingsModal,
 } from "./components/modals";
-import { api } from "./api";
 import { avatarHashOf, type PeerDto, type TransferItem } from "./types";
 
 /** Maps drag-event physical coordinates to CSS coordinates and a peer fingerprint. */
@@ -122,6 +121,30 @@ export default function App() {
   // Stable derived values let memoized children avoid high-frequency transfer renders.
   const peerList = useMemo(() => Object.values(dm.peers), [dm.peers]);
   const transferList = useMemo(() => Object.values(dm.transfers), [dm.transfers]);
+  // Running transfers per peer for the map; the string key keeps the map stable
+  // across progress ticks and only changes when a transfer starts, pauses or ends.
+  // Sends still waiting for the peer to accept carry nothing yet.
+  const linkKey = useMemo(
+    () =>
+      transferList
+        .filter((tr) => tr.status === "active" && !tr.awaiting && tr.peerFingerprint)
+        .map((tr) => `${tr.peerFingerprint}:${tr.direction}`)
+        .sort()
+        .join(","),
+    [transferList],
+  );
+  const links = useMemo(
+    () =>
+      new Map(
+        linkKey
+          ? linkKey.split(",").map((entry) => {
+              const [fp, dir] = entry.split(":");
+              return [fp, dir === "send" ? "send" : "recv"] as const;
+            })
+          : [],
+      ),
+    [linkKey],
+  );
   const openSettings = useCallback(() => setShowSettings(true), []);
   /** Returns an avatar image URL, or undefined when unavailable. */
   const srcOf = (avatar: string | null | undefined) => {
@@ -139,6 +162,8 @@ export default function App() {
             avatarSrcs={dm.avatarSrcs}
             dragging={dragging}
             dragHover={dragHover}
+            links={links}
+            flights={dm.flights}
             onPeerClick={setActivePeer}
           />
           {/* Drag guidance above the persistent scanner without blocking hit testing. */}
@@ -201,7 +226,7 @@ export default function App() {
         <PinModal
           peerName={pinRetry.peerName}
           onSubmit={(pin) => {
-            api.retrySend(pinRetry.transferId, pin).catch(console.error);
+            dm.retrySend(pinRetry, pin);
             // Later events update retry status; cache the PIN before they arrive.
             if (pinRetry.peerFingerprint) dm.rememberPin(pinRetry.peerFingerprint, pin);
             setPinRetry(null);

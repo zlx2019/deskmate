@@ -84,6 +84,7 @@ export const en = {
     recvFrom: "From ",
     pause: "Pause",
     pausedByPeer: "Paused by peer",
+    awaiting: "Awaiting",
     resume: "Resume",
     cancel: "Cancel",
     reveal: "Reveal",
@@ -149,6 +150,7 @@ export const en = {
       `${n} existing file${n === 1 ? "" : "s"} will be ${overwrite ? "overwritten" : "renamed automatically"}`,
     reject: "Decline",
     accept: "Accept",
+    withdrawn: (name: string) => `${name} cancelled the transfer`,
   },
 
   peer: {
@@ -216,6 +218,7 @@ export const en = {
     notifications: "System notifications",
     fingerprint: "device fingerprint",
     copyHint: "Click to copy",
+    copied: "Copied",
     nickname: "Nickname",
     nicknamePlaceholder: "Defaults to hostname",
     avatar: "Avatar",
@@ -238,7 +241,7 @@ export const en = {
     cancel: "Cancel",
     save: "Save",
     saved: "Settings saved",
-    aboutSlogan: "LAN file & text sharing — serverless, peer-to-peer, encrypted",
+    aboutSlogan: "LAN file & text sharing",
     aboutCredit: "MIT licensed · UI components from",
   },
 

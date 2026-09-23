@@ -22,19 +22,8 @@
   /* Two control-border levels for library inputs and similar controls. */
   --color-edge: #ababab;
   --color-edge-2: #7a7a7a;
-  /* Map colors: ground, two island levels, roads, and dotted texture. */
-  --color-map: #9ad2a9;
-  --color-isle: #88c597;
-  --color-isle-2: #aadeb8;
-  --color-road: rgba(255, 249, 226, 0.6);
+  /* Dotted page texture visible where panels do not cover the page. */
   --color-dots: rgba(255, 255, 255, 0.4);
-  /* Map tree canopy and trunk colors. */
-  --color-tree: #5ea873;
-  --color-trunk: #a9835a;
-  /* Map scenery: lake and two mountain layers. */
-  --color-water: #b7e0da;
-  --color-hill: #84bb95;
-  --color-hill-2: #a3d4b0;
   /* Teal primary colors for pulses, online state, actions, and local avatar. */
   --color-sonar: #19c8b9;
   --color-sonar-dim: #0fa89b;
@@ -50,6 +39,9 @@
   --color-faint: #9fbfa8;
   /* Light primary background for chips and icon surfaces. */
   --color-chip: rgba(25, 200, 185, 0.12);
+  /* Inactive switch track. Neutral rather than panel-derived so it never takes
+     on the green of the active state under a tinted panel color. */
+  --color-switch-off: #c7c7c7;
 
   /* Offline-safe system monospace font for data and labels. */
   --font-gauge: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -91,29 +83,153 @@
   --color-mist: #a79dbf;
   --color-faint: #6e6585;
   --color-chip: rgba(25, 200, 185, 0.16);
-  /* Night map with deep-purple ground and silhouette scenery. */
-  --color-map: #2b2540;
-  --color-isle: #332c4a;
-  --color-isle-2: #3c3456;
-  --color-road: rgba(255, 255, 255, 0.1);
   --color-dots: rgba(255, 255, 255, 0.06);
-  --color-tree: #35594a;
-  --color-trunk: #57493c;
-  --color-water: #274357;
-  --color-hill: #3a3352;
-  --color-hill-2: #453d63;
+  --color-switch-off: var(--color-line-2);
 }
 
-/* Moon and stars appear only in dark mode; clouds become dim silhouettes. */
-.map-night {
-  display: none;
+/* ---------- Island map palette ----------
+   Scenery colors for components/map. Night keeps the same shapes and swaps the
+   palette: day-only details (sparkles, gulls, butterflies) turn transparent and
+   night-only ones (stars, fireflies, lamp glow, lighthouse beam) appear. */
+:root {
+  --isle-sea: #84cfcd;
+  --isle-shallow: #a7e0d4;
+  --isle-foam: rgba(255, 255, 255, 0.8);
+  --isle-sand: #f4e6c0;
+  --isle-sand-edge: #e6d3a2;
+  /* Grass and the plaza under the local device. */
+  --isle-land: #92cb8f;
+  --isle-plaza: #b3dca9;
+  --isle-contour: rgba(46, 92, 58, 0.26);
+  --isle-contour-hi: rgba(255, 255, 255, 0.4);
+  /* Dotted trails from the local device to peers. */
+  --isle-path: #fff7dc;
+  --isle-path-under: rgba(60, 110, 70, 0.16);
+  --isle-path-hot: #ffd27a;
+  --isle-dot-ring: #ffffff;
+  /* Paper note flown along a trail for text messages. */
+  --isle-note: #fffdf6;
+  --isle-note-edge: rgba(40, 90, 50, 0.3);
+  /* Vegetation. */
+  --isle-tree: #5ea873;
+  --isle-tree-2: #4f9564;
+  --isle-tree-hi: #7cbf8c;
+  --isle-pine: #4a946a;
+  --isle-pine-2: #3f8660;
+  --isle-bush: #6fb57c;
+  --isle-trunk: #a9835a;
+  --isle-fruit: #e8554e;
+  --isle-tuft: rgba(46, 92, 58, 0.35);
+  --isle-fl-1: #ef6f6c;
+  --isle-fl-2: #f7d154;
+  --isle-fl-3: #f49ac1;
+  --isle-fl-4: #ffffff;
+  --isle-fl-5: #b39ddb;
+  --isle-fl-center: #f7d154;
+  --isle-mush: #e05a5a;
+  --isle-stem: #fff7e6;
+  --isle-rock: #c9c0a8;
+  --isle-rock-hi: rgba(255, 255, 255, 0.55);
+  --isle-shadow: rgba(40, 90, 50, 0.16);
+  /* Buildings and objects. */
+  --isle-wood: #b98b5b;
+  --isle-wood-2: #9c7147;
+  --isle-wall: #fff7e6;
+  --isle-roof: #e07a5f;
+  --isle-roof-b: #6fa8d6;
+  --isle-chimney: #b3aa92;
+  --isle-smoke: rgba(255, 255, 255, 0.8);
+  --isle-stripe: #e05a5a;
+  --isle-soil: #c9a36f;
+  --isle-sprout: #5ea873;
+  --isle-umbrella: #e05a5a;
+  --isle-mail: #e05a5a;
+  --isle-flag: #ffe7a1;
+  --isle-starfish: #f0a060;
+  --isle-flame: #f0a437;
+  --isle-flame-core: #ffe79a;
+  --isle-lamp: #ffe79a;
+  --isle-glow: transparent;
+  --isle-beam: transparent;
+  /* Life and weather. */
+  --isle-wave: rgba(255, 255, 255, 0.55);
+  --isle-sparkle: #ffffff;
+  --isle-star: transparent;
+  --isle-cloud: rgba(255, 255, 255, 0.82);
+  --isle-cloud-shadow: rgba(40, 90, 50, 0.1);
+  --isle-bird: #3f5f55;
+  --isle-duck: #fffaf0;
+  --isle-beak: #f0a437;
+  --isle-butterfly: #ffd166;
+  --isle-butterfly-2: #f49ac1;
+  --isle-firefly: transparent;
+  --isle-caption: rgba(255, 255, 255, 0.92);
+  --isle-caption-shadow: rgba(40, 90, 50, 0.35);
 }
-[data-theme="dark"] .map-night {
-  display: block;
-}
-[data-theme="dark"] .anim-cloud,
-[data-theme="dark"] .anim-cloud-slow {
-  fill: rgba(255, 255, 255, 0.07);
+[data-theme="dark"] {
+  --isle-sea: #1b2345;
+  --isle-shallow: #232e57;
+  --isle-foam: rgba(255, 255, 255, 0.14);
+  --isle-sand: #4a4467;
+  --isle-sand-edge: #565077;
+  --isle-land: #332c4e;
+  --isle-plaza: #40385e;
+  --isle-contour: rgba(255, 255, 255, 0.09);
+  --isle-contour-hi: rgba(255, 255, 255, 0.03);
+  --isle-path: rgba(255, 232, 180, 0.45);
+  --isle-path-under: rgba(0, 0, 0, 0.18);
+  --isle-note: #ece7f7;
+  --isle-note-edge: rgba(0, 0, 0, 0.35);
+  --isle-tree: #2e5747;
+  --isle-tree-2: #274a3d;
+  --isle-tree-hi: #3a6a57;
+  --isle-pine: #25483c;
+  --isle-pine-2: #1f3f35;
+  --isle-bush: #2c5244;
+  --isle-trunk: #4b3e33;
+  --isle-fruit: #8a4f5e;
+  --isle-tuft: rgba(255, 255, 255, 0.07);
+  --isle-fl-1: #a0525a;
+  --isle-fl-2: #b59a45;
+  --isle-fl-3: #a0668a;
+  --isle-fl-4: #b8b0d0;
+  --isle-fl-5: #7f70a8;
+  --isle-fl-center: #b59a45;
+  --isle-mush: #8a4f5e;
+  --isle-stem: #9a90b5;
+  --isle-rock: #5a5577;
+  --isle-rock-hi: rgba(255, 255, 255, 0.08);
+  --isle-shadow: rgba(0, 0, 0, 0.25);
+  --isle-wood: #5a4a3c;
+  --isle-wood-2: #4b3e33;
+  --isle-wall: #6d6488;
+  --isle-roof: #8a4f5e;
+  --isle-roof-b: #4e5a86;
+  --isle-chimney: #5a5577;
+  --isle-smoke: rgba(255, 255, 255, 0.12);
+  --isle-stripe: #8a4f5e;
+  --isle-soil: #4b3e33;
+  --isle-sprout: #2e5747;
+  --isle-umbrella: #8a4f5e;
+  --isle-mail: #8a4f5e;
+  --isle-flag: #ffe79a;
+  --isle-starfish: #7a5a60;
+  --isle-flame: #ffb347;
+  --isle-glow: rgba(255, 200, 100, 0.35);
+  --isle-beam: rgba(255, 236, 170, 0.42);
+  --isle-wave: rgba(255, 255, 255, 0.1);
+  --isle-sparkle: transparent;
+  --isle-star: rgba(255, 255, 255, 0.7);
+  --isle-cloud: rgba(255, 255, 255, 0.06);
+  --isle-cloud-shadow: rgba(0, 0, 0, 0.12);
+  --isle-bird: transparent;
+  --isle-duck: #cfc6e6;
+  --isle-beak: #b8864a;
+  --isle-butterfly: transparent;
+  --isle-butterfly-2: transparent;
+  --isle-firefly: #ffe79a;
+  --isle-caption: rgba(236, 231, 247, 0.6);
+  --isle-caption-shadow: transparent;
 }
 
 /* Target hard-coded cream library colors that do not use --animal-* variables.
@@ -156,7 +272,7 @@
   box-shadow: 0 1px var(--color-sonar-dim);
 }
 [class*="animal-switch-"]:not([class*="animal-switch-checked-"]) {
-  background: var(--color-line-2);
+  background: var(--color-switch-off);
 }
 /* Darken primary buttons and active switches in dark mode. */
 [data-theme="dark"] [class*="animal-btn-primary-"]:not([class*="animal-btn-danger-"]) {
@@ -532,17 +648,6 @@ textarea {
   }
 }
 
-/* Slow cloud drift across the map. */
-@keyframes cloud-drift {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  50% {
-    transform: translateX(26px);
-  }
-}
-
 .anim-sonar-wave {
   animation: sonar-wave 2.4s ease-out infinite;
 }
@@ -570,11 +675,308 @@ textarea {
 .anim-breathe {
   animation: breathe 2.4s ease-in-out infinite;
 }
-.anim-cloud {
-  animation: cloud-drift 26s ease-in-out infinite;
+
+/* ---------- Island map motion ----------
+   Per-element timing comes from --d (duration) and --delay (negative offset). */
+.isle-map {
+  background: var(--isle-sea);
+  transition: background-color 0.3s;
 }
-.anim-cloud-slow {
-  animation: cloud-drift 38s ease-in-out infinite reverse;
+.isle-self-caption {
+  color: var(--isle-caption);
+  text-shadow: 0 1px 2px var(--isle-caption-shadow);
+}
+.isle-wave {
+  animation: isle-wave var(--d, 6s) ease-in-out var(--delay, 0s) infinite;
+}
+@keyframes isle-wave {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(5px);
+  }
+}
+.isle-foam {
+  stroke-dasharray: 16 12;
+  animation: isle-foam 14s linear infinite;
+}
+.isle-stream {
+  stroke-dasharray: 4 9;
+  animation-duration: 6s;
+}
+@keyframes isle-foam {
+  to {
+    stroke-dashoffset: -280;
+  }
+}
+.isle-sparkle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: isle-sparkle var(--d, 3s) ease-in-out var(--delay, 0s) infinite;
+}
+@keyframes isle-sparkle {
+  0%,
+  100% {
+    transform: scale(0);
+  }
+  50% {
+    transform: scale(1);
+  }
+}
+.isle-sway {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: isle-sway var(--d, 5s) ease-in-out var(--delay, 0s) infinite;
+}
+@keyframes isle-sway {
+  0%,
+  100% {
+    transform: rotate(-2.5deg);
+  }
+  50% {
+    transform: rotate(2.5deg);
+  }
+}
+.isle-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: isle-spin 9s linear infinite;
+}
+/* The beam's tip sits on the lamp at the right-middle of its own box. */
+.isle-beam {
+  transform-box: fill-box;
+  transform-origin: 100% 50%;
+  animation: isle-spin 8s linear infinite;
+}
+@keyframes isle-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.isle-drift {
+  animation: isle-drift var(--d, 70s) linear var(--delay, 0s) infinite;
+}
+@keyframes isle-drift {
+  from {
+    transform: translateX(-260px);
+  }
+  to {
+    transform: translateX(1060px);
+  }
+}
+.isle-boat {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: isle-boat 4s ease-in-out infinite;
+}
+@keyframes isle-boat {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(3deg);
+  }
+}
+.isle-boat-drift {
+  animation: isle-boat-drift 30s ease-in-out infinite alternate;
+}
+@keyframes isle-boat-drift {
+  to {
+    transform: translateX(46px);
+  }
+}
+.isle-ripple {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: isle-ripple var(--d, 3.6s) ease-out var(--delay, 0s) infinite;
+}
+@keyframes isle-ripple {
+  from {
+    transform: scale(0.2);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+.isle-firefly {
+  animation: isle-firefly var(--d, 3s) ease-in-out var(--delay, 0s) infinite;
+}
+@keyframes isle-firefly {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(6px, -8px);
+  }
+}
+.isle-smoke {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: isle-smoke var(--d, 3.2s) ease-out var(--delay, 0s) infinite;
+}
+@keyframes isle-smoke {
+  from {
+    transform: translate(0, 0) scale(0.5);
+    opacity: 0.8;
+  }
+  to {
+    transform: translate(4px, -20px) scale(1.5);
+    opacity: 0;
+  }
+}
+.isle-flicker {
+  animation: isle-flicker var(--d, 1.4s) ease-in-out infinite;
+}
+@keyframes isle-flicker {
+  0%,
+  100% {
+    opacity: 0.8;
+  }
+  40% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.6;
+  }
+}
+.isle-flap {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: isle-flap 0.28s ease-in-out infinite alternate;
+}
+@keyframes isle-flap {
+  to {
+    transform: scaleX(0.25);
+  }
+}
+.isle-paddle {
+  animation: isle-paddle var(--d, 7s) ease-in-out infinite alternate;
+}
+@keyframes isle-paddle {
+  from {
+    transform: translate(-7px, 0);
+  }
+  to {
+    transform: translate(7px, 2px);
+  }
+}
+.isle-duck {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: isle-duck 1.8s ease-in-out infinite;
+}
+@keyframes isle-duck {
+  0%,
+  100% {
+    transform: rotate(-4deg);
+  }
+  50% {
+    transform: rotate(4deg) translateY(-1px);
+  }
+}
+/* Props step aside for peers and trails, then grow back. */
+.isle-prop {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  transition:
+    opacity 0.5s,
+    transform 0.5s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.isle-prop.cleared {
+  opacity: 0;
+  transform: scale(0.3);
+}
+/* Mailbox flag lies flat and springs up while files are arriving. */
+.isle-mail-flag {
+  transform-box: fill-box;
+  transform-origin: 0% 100%;
+  transform: rotate(90deg);
+  transition: transform 0.4s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+.isle-mail-flag.up {
+  transform: rotate(0deg);
+}
+/* Trails: dim or highlight on hover/drag, drawn out and retracted via a mask. */
+.isle-trail {
+  transition: opacity 0.35s;
+}
+.isle-trail.dim {
+  opacity: 0.3;
+}
+.isle-trail.hot .isle-trail-dots {
+  stroke: var(--isle-path-hot);
+}
+.isle-reveal {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: isle-reveal 0.9s 0.15s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.isle-retract {
+  stroke-dasharray: 1 1;
+  animation: isle-retract 0.4s ease-in forwards;
+}
+@keyframes isle-reveal {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes isle-retract {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 1;
+  }
+}
+.isle-burst {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: isle-burst 1s ease-out both;
+}
+@keyframes isle-burst {
+  from {
+    transform: scale(0.5);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+.isle-puff {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: isle-puff 0.8s ease-out 0.1s both;
+}
+@keyframes isle-puff {
+  from {
+    transform: translate(0, 0) scale(0.4);
+    opacity: 0.9;
+  }
+  to {
+    transform: translate(var(--dx), var(--dy)) scale(1.3);
+    opacity: 0;
+  }
+}
+/* Freeze everything while the window is hidden in the tray. */
+.isle-map[data-paused] * {
+  animation-play-state: paused !important;
+}
+/* Ambient scenery holds still under reduced motion; trails and peers still react. */
+@media (prefers-reduced-motion: reduce) {
+  .isle-scene * {
+    animation: none !important;
+  }
 }
 
 /* Instrument labels with uppercase text and wide letter spacing. */
@@ -584,6 +986,11 @@ textarea {
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--color-mist);
+}
+/* Wide tracking suits uppercase Latin but pulls Chinese labels apart. */
+:root:lang(zh) .gauge-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
 }
 
 /* Consistent panel scrollbars inside the WebView. */

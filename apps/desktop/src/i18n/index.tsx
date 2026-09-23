@@ -58,6 +58,8 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   const setLang = useCallback((next: Lang) => {
     current = { lang: next, t: LOCALES[next] };
     setLangState(next);
+    // Lets CSS tune typography per script via :lang().
+    document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
   }, []);
 
   useEffect(() => {

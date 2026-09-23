@@ -252,6 +252,12 @@ pub enum TransferEvent {
         /// Transfer task ID.
         transfer_id: String,
     },
+    /// Receive side: the sender withdrew a request still awaiting a decision,
+    /// so the pending offer should be dismissed.
+    OfferWithdrawn {
+        /// Transfer task ID.
+        transfer_id: String,
+    },
     /// Text received from a peer.
     TextReceived {
         /// Sender information.

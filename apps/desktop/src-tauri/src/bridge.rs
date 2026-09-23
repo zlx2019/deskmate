@@ -185,6 +185,9 @@ pub enum TransferEventDto {
     Paused { transfer_id: String },
     /// The peer resumed the transfer.
     Resumed { transfer_id: String },
+    /// The sender withdrew an offer still awaiting a decision; the frontend
+    /// dismisses its dialog.
+    OfferWithdrawn { transfer_id: String },
     /// The local send manifest was empty because all files were ignored or the
     /// source directory was empty. No peer connection was attempted.
     Ignored { transfer_id: String },
@@ -248,6 +251,7 @@ impl From<TransferEvent> for TransferEventDto {
             },
             TransferEvent::Paused { transfer_id } => Self::Paused { transfer_id },
             TransferEvent::Resumed { transfer_id } => Self::Resumed { transfer_id },
+            TransferEvent::OfferWithdrawn { transfer_id } => Self::OfferWithdrawn { transfer_id },
             TransferEvent::TextReceived { from, text } => Self::TextReceived {
                 from_name: from.name,
                 from_fingerprint: from.fingerprint,
@@ -517,6 +521,12 @@ async fn pump_transfer_events(app: AppHandle, mut events_rx: mpsc::Receiver<Tran
                 let state = app.state::<crate::state::AppState>();
                 crate::state::lock(&state.accepted_save_dirs).remove(transfer_id);
             }
+            // The engine already dropped the decision channel; forget the offer
+            // so a late respond_offer reports it as expired.
+            TransferEvent::OfferWithdrawn { transfer_id } => {
+                let state = app.state::<crate::state::AppState>();
+                lock(&state.offers).retain(|_, o| o.transfer_id != *transfer_id);
+            }
             // Copy received text to the system clipboard when configured.
             TransferEvent::TextReceived { text, .. } => auto_copy_text(&app, text),
             TransferEvent::FileCompleted {
@@ -750,6 +760,7 @@ fn try_auto_accept(
         AutoStartDto {
             transfer_id: offer.transfer_id.clone(),
             peer_name: offer.peer.name.clone(),
+            peer_fingerprint: offer.peer.fingerprint.clone(),
         },
     );
     None
@@ -763,6 +774,8 @@ struct AutoStartDto {
     transfer_id: String,
     /// Sender name.
     peer_name: String,
+    /// Sender fingerprint, locating the trail on the map.
+    peer_fingerprint: String,
 }
 
 /// Avatar-cache-ready event prompting the frontend to reload it.

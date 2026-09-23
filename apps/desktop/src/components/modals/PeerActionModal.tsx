@@ -33,7 +33,7 @@ export function PeerActionModal({
   /** Sends a clipboard screenshot through the file-transfer flow. */
   onSendImage: (peer: PeerDto, fileName: string, bytes: Uint8Array) => Promise<void>;
   /** Records successfully sent text in the message stream. */
-  onTextSent: (peerName: string, text: string) => void;
+  onTextSent: (peer: PeerDto, text: string) => void;
   /** Records a successfully sent clipboard image as an outgoing chat bubble. */
   onImageSent: (peerName: string, name: string, bytes: Uint8Array) => void;
   onClose: () => void;
@@ -99,7 +99,7 @@ export function PeerActionModal({
       }
       if (pinInput?.trim()) onPinLearned(peer.fingerprint, pinInput.trim());
       setPinInput(null);
-      onTextSent(peer.name, content);
+      onTextSent(peer, content);
       setSentTip(okTip);
       setTimeout(() => setSentTip(null), 1500);
       return true;
