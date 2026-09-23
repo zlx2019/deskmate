@@ -24,8 +24,8 @@
 Every device running Deskmate is a node on your LAN, and nodes discover each other automatically. When a node comes online it shows up as a bubble on every other node's main screen in real time — a simple drag and drop sends anything to the target node, delivered at wire speed over an end-to-end TLS 1.3 channel.
 
 <p align="center">
-  <img src="./assets/screenshot-day.png" width="49.5%" alt="deskmate by day — grassland map" />
-  <img src="./assets/screenshot-night.png" width="49.5%" alt="deskmate at night — starry night map" />
+  <img src="./assets/screenshot-day.png" width="49.5%" alt="deskmate by day — island map" />
+  <img src="./assets/screenshot-night.png" width="49.5%" alt="deskmate at night — the island under the stars" />
 </p>
 
 ## ✨ Features

@@ -25,8 +25,8 @@ Deskmate 运行的每台设备, 都是局域网络中的一个节点，节点与
 
 
 <p align="center">
-  <img src="./assets/screenshot-day.png" width="49.5%" alt="deskmate 白天 —— 青青草原地图" />
-  <img src="./assets/screenshot-night.png" width="49.5%" alt="deskmate 夜晚 —— 星空夜色地图" />
+  <img src="./assets/screenshot-day.png" width="49.5%" alt="deskmate 白天 —— 海岛地图" />
+  <img src="./assets/screenshot-night.png" width="49.5%" alt="deskmate 夜晚 —— 星空下的海岛" />
 </p>
 
 ## ✨ 特性
