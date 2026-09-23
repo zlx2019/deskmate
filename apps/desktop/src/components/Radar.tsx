@@ -1,13 +1,19 @@
-// Discovery view with a dotted texture, island map, center pulses, and peer bubbles.
-// Light and dark themes switch through CSS variables.
+// Discovery view: an island where the local device stands at the center and
+// peers land on random free spots around it, linked by dotted trails. Light and
+// dark themes switch through --isle-* CSS variables.
 //
-// Peers pop in with a landing ripple, bob while idle, and shrink out after
-// useExitingPeers briefly retains removed data.
+// Peers pop in with a landing puff and shrink out after useExitingPeers briefly
+// retains removed data.
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { Typewriter as ATypewriter } from "animal-island-ui";
 import { useI18n } from "../i18n";
 import { avatarHashOf, type PeerDto, type SelfInfoDto } from "../types";
+import { CX, CY, VIEW_H, VIEW_W } from "./map/geometry";
+import { IslandBackdrop } from "./map/IslandBackdrop";
+import { clearedProps, usePlacedPeers } from "./map/layout";
+import { SCENE } from "./map/scene";
+import { Trails, type TransferLinks } from "./map/Trails";
 
 /** Derives a stable avatar hue from a fingerprint. */
 function hueOf(fingerprint: string): number {
@@ -56,206 +62,6 @@ export function Avatar({
     </div>
   );
 }
-
-/** Organic island map with dotted texture, corner islands, distance rings,
- * curved roads, mountains, lakes, trees, and clouds. The viewBox matches the
- * near-square desktop window and aligns ring center (330,294) with the local
- * node at container position 50%,46%. */
-const MapBackdrop = memo(function MapBackdrop() {
-  return (
-    <svg
-      className="absolute inset-0 h-full w-full"
-      viewBox="0 0 660 640"
-      preserveAspectRatio="xMidYMid slice"
-      aria-hidden
-    >
-      <defs>
-        <pattern id="dm-dots" width="26" height="26" patternUnits="userSpaceOnUse">
-          <circle cx="2" cy="2" r="1.6" fill="var(--color-dots)" />
-        </pattern>
-      </defs>
-      <rect width="660" height="640" fill="url(#dm-dots)" />
-      {/* Layered mountains with a snow-capped main peak. */}
-      <path d="M 262 122 Q 310 50 358 122 Z" fill="var(--color-hill-2)" />
-      <path d="M 185 122 Q 242 26 300 122 Z" fill="var(--color-hill)" />
-      <path d="M 225 74 Q 242 44 260 74 Q 242 84 225 74 Z" fill="rgba(255,255,255,0.85)" />
-      {/* Organic island shapes with a light beach-like outline. */}
-      <path
-        d="M-50 90 C 60 30, 190 90, 175 190 C 160 270, 40 300, -50 250 Z"
-        fill="var(--color-isle)"
-        stroke="var(--color-road)"
-        strokeWidth="5"
-      />
-      <path
-        d="M430 -40 C 570 -20, 660 60, 620 150 C 580 230, 460 210, 425 135 C 400 80, 395 5, 430 -40 Z"
-        fill="var(--color-isle)"
-        stroke="var(--color-road)"
-        strokeWidth="5"
-      />
-      <path
-        d="M470 400 C 590 360, 700 430, 685 530 C 665 625, 500 625, 455 530 C 432 475, 435 430, 470 400 Z"
-        fill="var(--color-isle-2)"
-        stroke="var(--color-road)"
-        strokeWidth="5"
-      />
-      <path
-        d="M100 450 C 190 400, 300 450, 290 530 C 278 615, 110 615, 75 545 C 58 505, 65 475, 100 450 Z"
-        fill="var(--color-isle-2)"
-        stroke="var(--color-road)"
-        strokeWidth="5"
-      />
-      {/* Dashed elliptical distance rings. */}
-      <ellipse
-        cx="330"
-        cy="294"
-        rx="170"
-        ry="150"
-        fill="none"
-        stroke="var(--color-road)"
-        strokeWidth="1"
-        strokeDasharray="3 6"
-      />
-      <ellipse
-        cx="330"
-        cy="294"
-        rx="255"
-        ry="225"
-        fill="none"
-        stroke="var(--color-road)"
-        strokeWidth="1"
-        strokeDasharray="3 6"
-      />
-      {/* Curved roads. */}
-      <path
-        d="M-20 400 C 140 340, 240 410, 330 370 C 430 325, 520 370, 690 300"
-        fill="none"
-        stroke="var(--color-road)"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
-      <path
-        d="M210 -20 C 240 100, 180 220, 265 320 C 335 405, 330 480, 355 660"
-        fill="none"
-        stroke="var(--color-road)"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
-      {/* Organic lakes with light shores and highlights at both edges. */}
-      <g>
-        <path
-          d="M-30 360 C 0 338, 70 342, 95 368 C 118 392, 100 420, 60 424 C 15 428, -25 415, -30 390 Z"
-          fill="var(--color-water)"
-          stroke="var(--color-road)"
-          strokeWidth="4"
-        />
-        <ellipse cx="38" cy="384" rx="22" ry="7" fill="rgba(255,255,255,0.35)" />
-        <path d="M 62 402 q 11 -5 22 0" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" strokeLinecap="round" />
-        <path
-          d="M 553 290 C 567 270, 609 266, 633 286 C 655 304, 645 330, 611 336 C 577 342, 549 318, 553 290 Z"
-          fill="var(--color-water)"
-          stroke="var(--color-road)"
-          strokeWidth="4"
-        />
-        <ellipse cx="587" cy="298" rx="16" ry="6" fill="rgba(255,255,255,0.35)" />
-      </g>
-      {/* Groves and scattered trees with minimal round canopies. */}
-      <g>
-        {[
-          // Upper-left island grove.
-          [70, 120],
-          [98, 140],
-          [126, 162],
-          [60, 170],
-          [88, 190],
-          [140, 220],
-          // Mountain base and upper clearing.
-          [340, 132],
-          [368, 100],
-          // Upper-right island.
-          [552, 62],
-          [582, 130],
-          [508, 172],
-          // Left lakeshore.
-          [112, 348],
-          [86, 442],
-          // Right lakeshore.
-          [584, 352],
-          // Lower-right island grove.
-          [545, 468],
-          [575, 508],
-          [610, 478],
-          [560, 545],
-          [606, 532],
-          // Lower-left island.
-          [110, 500],
-          [148, 532],
-          [235, 555],
-          // Lower clearing.
-          [355, 588],
-          [398, 598],
-          [424, 622],
-        ].map(([cx, cy]) => (
-          <g key={`${cx}-${cy}`}>
-            <rect x={cx - 1.5} y={cy} width="3" height="8" rx="1.5" fill="var(--color-trunk)" />
-            <circle cx={cx} cy={cy - 4} r="7" fill="var(--color-tree)" />
-            <circle cx={cx - 4} cy={cy - 1} r="4.5" fill="var(--color-tree)" />
-            <circle cx={cx + 4} cy={cy - 1} r="4.5" fill="var(--color-tree)" />
-          </g>
-        ))}
-      </g>
-      {/* Dark-theme moon and stars, hidden by CSS in the light theme. */}
-      <g className="map-night">
-        <circle cx="388" cy="52" r="24" fill="none" stroke="rgba(242,232,201,0.22)" strokeWidth="5" />
-        <circle cx="388" cy="52" r="17" fill="#f2e8c9" opacity="0.92" />
-        <circle cx="382" cy="46" r="3.2" fill="rgba(0,0,0,0.09)" />
-        <circle cx="394" cy="57" r="2.3" fill="rgba(0,0,0,0.08)" />
-        {/* Two four-point stars and scattered smaller stars. */}
-        {(
-          [
-            [210, 78, 6],
-            [572, 178, 5],
-          ] as const
-        ).map(([x, y, s]) => (
-          <path
-            key={`star-${x}-${y}`}
-            d={`M ${x} ${y - s} L ${x + s * 0.28} ${y - s * 0.28} L ${x + s} ${y} L ${x + s * 0.28} ${y + s * 0.28} L ${x} ${y + s} L ${x - s * 0.28} ${y + s * 0.28} L ${x - s} ${y} L ${x - s * 0.28} ${y - s * 0.28} Z`}
-            fill="rgba(242,232,201,0.8)"
-          />
-        ))}
-        {(
-          [
-            [82, 62, 1.7],
-            [152, 96, 1.3],
-            [244, 42, 1.5],
-            [318, 132, 1.2],
-            [458, 32, 1.6],
-            [502, 122, 1.3],
-            [612, 68, 1.7],
-            [76, 296, 1.3],
-            [622, 250, 1.4],
-            [345, 218, 1.1],
-          ] as const
-        ).map(([x, y, r]) => (
-          <circle key={`dot-${x}-${y}`} cx={x} cy={y} r={r} fill="rgba(255,255,255,0.65)" />
-        ))}
-      </g>
-
-      {/* Slowly drifting clouds with offset timing and dark-theme dimming. */}
-      <g className="anim-cloud" fill="rgba(255,255,255,0.75)">
-        <ellipse cx="150" cy="330" rx="34" ry="13" />
-        <ellipse cx="175" cy="320" rx="22" ry="11" />
-      </g>
-      <g className="anim-cloud-slow" fill="rgba(255,255,255,0.6)">
-        <ellipse cx="540" cy="280" rx="28" ry="11" />
-        <ellipse cx="562" cy="272" rx="18" ry="9" />
-      </g>
-      <g className="anim-cloud" style={{ animationDelay: "-9s" }} fill="rgba(255,255,255,0.7)">
-        <ellipse cx="430" cy="52" rx="30" ry="12" />
-        <ellipse cx="452" cy="43" rx="19" ry="10" />
-      </g>
-    </svg>
-  );
-});
 
 /** Rotates footer hints through a typewriter animation and timed pause. */
 function RotatingTips() {
@@ -398,6 +204,54 @@ function useExitingPeers(peers: PeerDto[]): RenderedPeer[] {
   return rendered;
 }
 
+/** Uniform "meet" fit of the design space into an element. */
+function useFit(ref: RefObject<HTMLElement | null>): { s: number; ox: number; oy: number } {
+  const [fit, setFit] = useState({ s: 1, ox: 0, oy: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      const s = Math.min(w / VIEW_W, h / VIEW_H);
+      setFit({ s, ox: (w - VIEW_W * s) / 2, oy: (h - VIEW_H * s) / 2 });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return fit;
+}
+
+/** Tracks whether the page is hidden (window minimized to the tray). */
+function usePageHidden(): boolean {
+  const [hidden, setHidden] = useState(document.hidden);
+  useEffect(() => {
+    const onChange = () => setHidden(document.hidden);
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+  return hidden;
+}
+
+/** Tracks the system reduced-motion preference. */
+function useReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
+  useEffect(() => {
+    const mq = matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => setReduced(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
+}
+
+/** Avatar border width; the avatar center sits this far below its box edge plus the radius. */
+const AVATAR_BORDER = 3;
+/** Local-device avatar diameter in design units. */
+const SELF_SIZE = 62;
+
 interface RadarProps {
   self: SelfInfoDto | null;
   peers: PeerDto[];
@@ -407,6 +261,8 @@ interface RadarProps {
   dragHover: string | null;
   /** Whether a file drag is active. */
   dragging: boolean;
+  /** Running transfers by peer; their dots flow along the trails. */
+  links: TransferLinks;
   onPeerClick: (peer: PeerDto) => void;
 }
 
@@ -417,10 +273,32 @@ export const Radar = memo(function Radar({
   avatarSrcs,
   dragHover,
   dragging,
+  links,
   onPeerClick,
 }: RadarProps) {
   const { t } = useI18n();
   const rendered = useExitingPeers(peers);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<SVGSVGElement>(null);
+  const fxRef = useRef<SVGSVGElement>(null);
+  const fit = useFit(rootRef);
+  const hidden = usePageHidden();
+  const reduced = useReducedMotion();
+  const [hoverFp, setHoverFp] = useState<string | null>(null);
+
+  const placed = usePlacedPeers(rendered);
+  const cleared = useMemo(() => clearedProps(SCENE.props, placed), [placed]);
+  const mailFlag = useMemo(() => [...links.values()].includes("recv"), [links]);
+  const highlight = dragHover ?? hoverFp;
+
+  // SMIL animations ignore CSS play state, so pause them through the SVG API:
+  // everything while hidden, ambient scenery only under reduced motion.
+  useEffect(() => {
+    if (hidden || reduced) sceneRef.current?.pauseAnimations();
+    else sceneRef.current?.unpauseAnimations();
+    if (hidden) fxRef.current?.pauseAnimations();
+    else fxRef.current?.unpauseAnimations();
+  }, [hidden, reduced]);
 
   /** Returns an avatar image URL, or undefined when unavailable. */
   const srcOf = (avatar: string | null | undefined) => {
@@ -428,110 +306,119 @@ export const Radar = memo(function Radar({
     return hash ? avatarSrcs[hash] : undefined;
   };
 
-  // Sort peers by fingerprint for stable circular placement, then add a small
-  // fingerprint-based offset. CSS transitions smooth later position changes.
-  const positioned = useMemo(() => {
-    const sorted = [...rendered].sort((a, b) =>
-      a.peer.fingerprint.localeCompare(b.peer.fingerprint),
-    );
-    return sorted.map((r, i) => {
-      const fp = r.peer.fingerprint;
-      const jitter = ((parseInt(fp.slice(4, 8) || "0", 16) % 100) / 100 - 0.5) * 0.5;
-      const angle = -Math.PI / 2 + (i / sorted.length) * Math.PI * 2 + jitter;
-      const radius = 26 + (parseInt(fp.slice(8, 10) || "0", 16) % 12);
-      return {
-        ...r,
-        x: 50 + radius * Math.cos(angle),
-        y: 46 + radius * Math.sin(angle) * 0.92,
-      };
-    });
-  }, [rendered]);
+  // Nodes live in design units inside the fitted layer; counter-scale keeps
+  // avatars readable (at least 75%) when the island shrinks in small windows.
+  const nodeScale = Math.min(1, Math.max(0.75, fit.s)) / fit.s;
+  /** Positions a node so its avatar center sits on (x, y). */
+  const anchorAt = (x: number, y: number, size: number): CSSProperties => {
+    const anchor = size / 2 + AVATAR_BORDER;
+    return {
+      left: x,
+      top: y,
+      transform: `translate(-50%, ${-anchor}px) scale(${nodeScale})`,
+      transformOrigin: `50% ${anchor}px`,
+    };
+  };
 
   return (
-    <div className="relative h-full overflow-hidden bg-map transition-colors duration-300">
-      <MapBackdrop />
+    <div ref={rootRef} className="isle-map relative h-full overflow-hidden" data-paused={hidden ? "" : undefined}>
+      <svg
+        ref={sceneRef}
+        className="isle-scene pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+        preserveAspectRatio="xMidYMid meet"
+        aria-hidden
+      >
+        <IslandBackdrop cleared={cleared} mailFlag={mailFlag} />
+      </svg>
+      <svg
+        ref={fxRef}
+        className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+        preserveAspectRatio="xMidYMid meet"
+        aria-hidden
+      >
+        <Trails placed={placed} links={links} highlight={highlight} />
+      </svg>
       <PresenceToast peers={peers} />
 
-      {/* Center: local device with two offset pulse rings. */}
-      <div className="absolute left-1/2 top-[46%] -translate-x-1/2 -translate-y-1/2 text-center">
-        <div className="relative inline-block">
-          {[0, 1.2].map((delay) => (
-            <span
-              key={delay}
-              className="anim-sonar-wave pointer-events-none absolute -inset-0.5 rounded-full border-2 border-sonar"
-              style={{ animationDelay: `${delay}s` }}
-            />
-          ))}
-          <div className="relative overflow-hidden rounded-full border-[3px] border-panel-2">
-            {self ? (
-              <Avatar
-                name={self.name}
-                fingerprint={self.fingerprint}
-                size={56}
-                avatar={self.avatar}
-                src={srcOf(self.avatar)}
-              />
-            ) : (
-              <div className="size-14 rounded-full bg-sonar-dim" />
-            )}
-          </div>
-        </div>
-        <div className="mx-auto mt-2 w-fit max-w-44 truncate rounded-full border-2 border-line bg-panel px-3 py-0.5 text-xs font-bold text-fog shadow-[0_2px_0_rgba(41,71,51,0.12)]">
-          {self ? `${self.name} · ${t.radar.myDevice}` : "…"}
-        </div>
-        <div className="mt-1 text-[11px] tracking-[0.18em] text-white/80">{t.radar.thisDevice}</div>
-      </div>
-
-      {/* Nearby peer bubbles. */}
-      {positioned.map(({ peer, leaving, x, y }, i) => {
-        const hovered = dragHover === peer.fingerprint;
-        return (
-          <button
-            key={peer.fingerprint}
-            data-peer={peer.fingerprint}
-            onClick={() => onPeerClick(peer)}
-            disabled={leaving}
-            className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer text-center transition-[left,top] duration-500"
-            style={{ left: `${x}%`, top: `${y}%` }}
-            title={`${peer.name} · ${peer.addrs[0] ?? ""}:${peer.port}`}
-          >
-            <div className={leaving ? "anim-pop-out" : "anim-pop-in"}>
-              {/* Arrival ring expands once and remains transparent afterward. */}
-              {!leaving && (
-                <span className="anim-ring-burst pointer-events-none absolute -inset-1 rounded-full border-2 border-sonar" />
+      <div
+        className="pointer-events-none absolute left-0 top-0 origin-top-left"
+        style={{ width: VIEW_W, height: VIEW_H, transform: `translate(${fit.ox}px, ${fit.oy}px) scale(${fit.s})` }}
+      >
+        {/* Center: local device on the plaza. */}
+        <div className="absolute text-center" style={anchorAt(CX, CY, SELF_SIZE)}>
+          <div className="relative inline-block">
+            <span className="anim-sonar-wave pointer-events-none absolute -inset-0.5 rounded-full border-2 border-sonar" />
+            <div className="relative overflow-hidden rounded-full border-[3px] border-panel-2">
+              {self ? (
+                <Avatar
+                  name={self.name}
+                  fingerprint={self.fingerprint}
+                  size={SELF_SIZE}
+                  avatar={self.avatar}
+                  src={srcOf(self.avatar)}
+                />
+              ) : (
+                <div className="rounded-full bg-sonar-dim" style={{ width: SELF_SIZE, height: SELF_SIZE }} />
               )}
-              <div
-                className={`relative inline-block transition-transform duration-200 ${
-                  hovered ? "scale-125" : dragging ? "scale-110" : "hover:scale-110"
-                }`}
-              >
-                {hovered && (
-                  <>
-                    <span className="anim-ping-ring absolute inset-0 rounded-full border-2 border-ember" />
-                    <span className="absolute -inset-2 rounded-full border-2 border-dashed border-ember/80" />
-                  </>
-                )}
-                {/* Offset idle bobbing. */}
+            </div>
+          </div>
+          <div className="mx-auto mt-2 w-fit max-w-44 truncate rounded-full border-2 border-line bg-panel px-3 py-0.5 text-xs font-bold text-fog shadow-[0_2px_0_rgba(41,71,51,0.12)]">
+            {self ? `${self.name} · ${t.radar.myDevice}` : "…"}
+          </div>
+          <div className="isle-self-caption mt-1 text-[11px] tracking-[0.18em]">{t.radar.thisDevice}</div>
+        </div>
+
+        {/* Peers around the island. */}
+        {placed.map(({ peer, leaving, pos, size }, i) => {
+          const hovered = dragHover === peer.fingerprint;
+          return (
+            <button
+              key={peer.fingerprint}
+              data-peer={peer.fingerprint}
+              onClick={() => onPeerClick(peer)}
+              onMouseEnter={() => setHoverFp(peer.fingerprint)}
+              onMouseLeave={() => setHoverFp((cur) => (cur === peer.fingerprint ? null : cur))}
+              disabled={leaving}
+              className="pointer-events-auto absolute cursor-pointer text-center"
+              style={anchorAt(pos[0], pos[1], size)}
+              title={`${peer.name} · ${peer.addrs[0] ?? ""}:${peer.port}`}
+            >
+              <div className={leaving ? "anim-pop-out" : "anim-pop-in"}>
                 <div
-                  className="anim-bob overflow-hidden rounded-full border-[3px] border-panel-2"
-                  style={{ animationDelay: `${(i % 5) * 0.6}s` }}
+                  className={`relative inline-block transition-transform duration-200 ${
+                    hovered ? "scale-125" : dragging ? "scale-110" : "hover:scale-110"
+                  }`}
                 >
-                  <Avatar
-                    name={peer.name}
-                    fingerprint={peer.fingerprint}
-                    size={48}
-                    avatar={peer.avatar}
-                    src={srcOf(peer.avatar)}
-                  />
+                  {hovered && (
+                    <>
+                      <span className="anim-ping-ring absolute inset-0 rounded-full border-2 border-ember" />
+                      <span className="absolute -inset-2 rounded-full border-2 border-dashed border-ember/80" />
+                    </>
+                  )}
+                  {/* Offset idle bobbing. */}
+                  <div
+                    className="anim-bob overflow-hidden rounded-full border-[3px] border-panel-2"
+                    style={{ animationDelay: `${(i % 5) * 0.6}s` }}
+                  >
+                    <Avatar
+                      name={peer.name}
+                      fingerprint={peer.fingerprint}
+                      size={size}
+                      avatar={peer.avatar}
+                      src={srcOf(peer.avatar)}
+                    />
+                  </div>
+                </div>
+                <div className="mx-auto mt-2 w-fit max-w-32 truncate rounded-full border-2 border-line bg-panel px-3 py-0.5 text-xs font-bold text-fog shadow-[0_2px_0_rgba(41,71,51,0.12)]">
+                  {peer.name}
                 </div>
               </div>
-              <div className="mx-auto mt-2 w-fit max-w-32 truncate rounded-full border-2 border-line bg-panel px-3 py-0.5 text-xs font-bold text-fog shadow-[0_2px_0_rgba(41,71,51,0.12)]">
-                {peer.name}
-              </div>
-            </div>
-          </button>
-        );
-      })}
+            </button>
+          );
+        })}
+      </div>
 
       {/* Footer with persistent scan status and drag guidance. */}
       <div className="pointer-events-none absolute inset-x-0 bottom-4 flex flex-col items-center">

@@ -122,6 +122,29 @@ export default function App() {
   // Stable derived values let memoized children avoid high-frequency transfer renders.
   const peerList = useMemo(() => Object.values(dm.peers), [dm.peers]);
   const transferList = useMemo(() => Object.values(dm.transfers), [dm.transfers]);
+  // Running transfers per peer for the map; the string key keeps the map stable
+  // across progress ticks and only changes when a transfer starts, pauses or ends.
+  const linkKey = useMemo(
+    () =>
+      transferList
+        .filter((tr) => tr.status === "active" && tr.peerFingerprint)
+        .map((tr) => `${tr.peerFingerprint}:${tr.direction}`)
+        .sort()
+        .join(","),
+    [transferList],
+  );
+  const links = useMemo(
+    () =>
+      new Map(
+        linkKey
+          ? linkKey.split(",").map((entry) => {
+              const [fp, dir] = entry.split(":");
+              return [fp, dir === "send" ? "send" : "recv"] as const;
+            })
+          : [],
+      ),
+    [linkKey],
+  );
   const openSettings = useCallback(() => setShowSettings(true), []);
   /** Returns an avatar image URL, or undefined when unavailable. */
   const srcOf = (avatar: string | null | undefined) => {
@@ -139,6 +162,7 @@ export default function App() {
             avatarSrcs={dm.avatarSrcs}
             dragging={dragging}
             dragHover={dragHover}
+            links={links}
             onPeerClick={setActivePeer}
           />
           {/* Drag guidance above the persistent scanner without blocking hit testing. */}
