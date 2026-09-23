@@ -53,6 +53,7 @@ export type TransferEventDto =
   | { kind: "interrupted"; transferId: string; reason: string; code: string; detail: string | null }
   | { kind: "paused"; transferId: string }
   | { kind: "resumed"; transferId: string }
+  | { kind: "offerWithdrawn"; transferId: string }
   | { kind: "ignored"; transferId: string }
   | { kind: "rejected"; transferId: string; reason: string | null; pinRequired: boolean; reasonCode: string | null }
   | { kind: "textReceived"; fromName: string; fromFingerprint: string; text: string };
@@ -128,6 +129,17 @@ export interface PrecheckDto {
   conflicts: string[];
 }
 
+/** A note that flies once along a peer's map trail after a text message. */
+export interface NoteFlight {
+  id: string;
+  fingerprint: string;
+  /** Outgoing notes fly away from the local device, incoming ones toward it. */
+  direction: "send" | "recv";
+}
+
+/** Duration of one note flight in milliseconds. */
+export const NOTE_FLIGHT_MS = 1200;
+
 /** Frontend aggregate state for one transfer task. */
 export interface TransferItem {
   transferId: string;
@@ -154,6 +166,8 @@ export interface TransferItem {
   pausedLocal?: boolean;
   /** Peer pause flag driven by engine Paused and Resumed events. */
   pausedByPeer?: boolean;
+  /** Send still waiting for the peer to accept; cleared by the first progress. */
+  awaiting?: boolean;
   startedAt: number;
 }
 

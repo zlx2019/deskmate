@@ -65,6 +65,8 @@ function TransferCard({
   const { t } = useI18n();
   const pct = item.size > 0 ? Math.min(100, (item.done / item.size) * 100) : 0;
   const running = item.status === "active" || item.status === "paused";
+  // Until the peer accepts there is nothing to pause; only cancel applies.
+  const awaiting = item.status === "active" && item.awaiting;
   // Hide the current-file ETA until a speed sample exists.
   const eta =
     item.status === "active" && item.speed > 0 && item.size > item.done
@@ -84,9 +86,11 @@ function TransferCard({
         <StatusTag
           status={item.status}
           label={
-            item.status === "paused" && item.pausedByPeer && !item.pausedLocal
-              ? t.transfer.pausedByPeer
-              : t.transfer.status[item.status]
+            awaiting
+              ? t.transfer.awaiting
+              : item.status === "paused" && item.pausedByPeer && !item.pausedLocal
+                ? t.transfer.pausedByPeer
+                : t.transfer.status[item.status]
           }
         />
       </div>
@@ -106,7 +110,7 @@ function TransferCard({
             </span>
             <span className="flex-1" />
             {/* Hide resume when only the peer paused because local resume has no effect. */}
-            {item.status === "active" ? (
+            {awaiting ? null : item.status === "active" ? (
               <PanelButton onClick={() => onPause(item.transferId)}>
                 {t.transfer.pause}
               </PanelButton>
@@ -330,7 +334,7 @@ export const TransferPanel = memo(function TransferPanel({
   onResume: (transferId: string) => void;
   onPinLearned: (fingerprint: string, pin: string) => void;
   /** Records successfully sent text in the message stream. */
-  onTextSent: (peerName: string, text: string) => void;
+  onTextSent: (peer: PeerDto, text: string) => void;
   /** Records a successfully sent clipboard image as an outgoing chat bubble. */
   onImageSent: (peerName: string, name: string, bytes: Uint8Array) => void;
   /** Sends a clipboard screenshot from the global-hotkey flow. */

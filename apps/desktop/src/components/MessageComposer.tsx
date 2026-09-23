@@ -27,7 +27,7 @@ export function MessageComposer({
   /** Stores a verified PIN in the session cache. */
   onPinLearned: (fingerprint: string, pin: string) => void;
   /** Records a successfully sent message in the message stream. */
-  onSent: (peerName: string, text: string) => void;
+  onSent: (peer: PeerDto, text: string) => void;
   /** Records a successfully sent clipboard image as an outgoing chat bubble. */
   onImageSent: (peerName: string, name: string, bytes: Uint8Array) => void;
   /** Sends a clipboard screenshot through the file-transfer flow. */
@@ -64,7 +64,7 @@ export function MessageComposer({
       if (pinInput?.trim()) onPinLearned(target.fingerprint, pinInput.trim());
       setPinInput(null);
       setTip(null);
-      onSent(target.name, content);
+      onSent(target, content);
       return true;
     } catch (e) {
       setTip({ text: formatError(e), error: true });

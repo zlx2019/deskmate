@@ -352,6 +352,10 @@ fn print_transfer_event(event: TransferEvent, bar: &mut ProgressBar) {
             bar.clear();
             println!("▶ The peer resumed the transfer");
         }
+        TransferEvent::OfferWithdrawn { .. } => {
+            bar.clear();
+            println!("↩ The sender withdrew the request; the pending answer is ignored");
+        }
         TransferEvent::TextReceived { from, text } => {
             bar.clear();
             println!("📋 Text from {} (verified byte for byte):", from.name);

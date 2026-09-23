@@ -1,6 +1,7 @@
-// Live map layer: trails to peers, transfer dots and arrival puffs.
+// Live map layer: trails to peers, transfer dots, note flights and arrival puffs.
 
-import { memo, type CSSProperties } from "react";
+import { memo, useCallback, type CSSProperties } from "react";
+import { NOTE_FLIGHT_MS, type NoteFlight } from "../../types";
 import { f1 } from "./geometry";
 import { trailPath, type PlacedPeer } from "./layout";
 
@@ -15,8 +16,47 @@ const PUFFS = [
   [11, 9],
 ] as const;
 
-/** Trail, transfer dots and ground effects for one peer. */
-function PeerTrail({ p, link, highlight }: { p: PlacedPeer; link?: "send" | "recv"; highlight: string | null }) {
+/** A paper note that flies once along a trail after a text message. */
+function FlyingNote({ d, direction }: { d: string; direction: NoteFlight["direction"] }) {
+  // Animations inserted after load resolve begin="0s" against the document
+  // timeline, which has long passed, so they are started explicitly on mount.
+  const start = useCallback((g: SVGGElement | null) => {
+    g?.querySelectorAll<SVGAnimationElement>("animate, animateMotion").forEach((a) => a.beginElement());
+  }, []);
+  const dur = `${NOTE_FLIGHT_MS}ms`;
+  return (
+    <g ref={start} opacity="0">
+      <animateMotion
+        dur={dur}
+        begin="indefinite"
+        fill="freeze"
+        path={d}
+        keyPoints={direction === "send" ? "0;1" : "1;0"}
+        keyTimes="0;1"
+        calcMode="spline"
+        keySplines="0.4 0 0.2 1"
+      />
+      <animate attributeName="opacity" dur={dur} begin="indefinite" fill="freeze" values="0;1;1;0" keyTimes="0;0.15;0.8;1" />
+      <g transform="rotate(-12)">
+        <rect x="-11" y="-8" width="22" height="16" rx="3" fill="var(--isle-note)" stroke="var(--isle-note-edge)" strokeWidth="1.2" />
+        <path d="M-6 -2.5 H5 M-6 2.5 H2" stroke="var(--color-sonar)" strokeWidth="2.2" strokeLinecap="round" />
+      </g>
+    </g>
+  );
+}
+
+/** Trail, transfer dots, note flights and ground effects for one peer. */
+function PeerTrail({
+  p,
+  link,
+  flights,
+  highlight,
+}: {
+  p: PlacedPeer;
+  link?: "send" | "recv";
+  flights: NoteFlight[];
+  highlight: string | null;
+}) {
   const fp = p.peer.fingerprint;
   const d = trailPath(p);
   const [x, y] = p.pos;
@@ -61,6 +101,7 @@ function PeerTrail({ p, link, highlight }: { p: PlacedPeer; link?: "send" | "rec
             />
           </circle>
         ))}
+      {!p.leaving && flights.map((f) => <FlyingNote key={f.id} d={d} direction={f.direction} />)}
       {!p.leaving && (
         <>
           <ellipse cx={f1(x)} cy={f1(y + p.size * 0.46)} rx={p.size * 0.44} ry={p.size * 0.13} fill="var(--isle-shadow)" />
@@ -87,16 +128,24 @@ function PeerTrail({ p, link, highlight }: { p: PlacedPeer; link?: "send" | "rec
 export const Trails = memo(function Trails({
   placed,
   links,
+  flights,
   highlight,
 }: {
   placed: PlacedPeer[];
   links: TransferLinks;
+  flights: NoteFlight[];
   highlight: string | null;
 }) {
   return (
     <>
       {placed.map((p) => (
-        <PeerTrail key={p.peer.fingerprint} p={p} link={links.get(p.peer.fingerprint)} highlight={highlight} />
+        <PeerTrail
+          key={p.peer.fingerprint}
+          p={p}
+          link={links.get(p.peer.fingerprint)}
+          flights={flights.filter((f) => f.fingerprint === p.peer.fingerprint)}
+          highlight={highlight}
+        />
       ))}
     </>
   );

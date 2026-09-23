@@ -39,6 +39,9 @@
   --color-faint: #9fbfa8;
   /* Light primary background for chips and icon surfaces. */
   --color-chip: rgba(25, 200, 185, 0.12);
+  /* Inactive switch track. Neutral rather than panel-derived so it never takes
+     on the green of the active state under a tinted panel color. */
+  --color-switch-off: #c7c7c7;
 
   /* Offline-safe system monospace font for data and labels. */
   --font-gauge: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -81,6 +84,7 @@
   --color-faint: #6e6585;
   --color-chip: rgba(25, 200, 185, 0.16);
   --color-dots: rgba(255, 255, 255, 0.06);
+  --color-switch-off: var(--color-line-2);
 }
 
 /* ---------- Island map palette ----------
@@ -103,6 +107,9 @@
   --isle-path-under: rgba(60, 110, 70, 0.16);
   --isle-path-hot: #ffd27a;
   --isle-dot-ring: #ffffff;
+  /* Paper note flown along a trail for text messages. */
+  --isle-note: #fffdf6;
+  --isle-note-edge: rgba(40, 90, 50, 0.3);
   /* Vegetation. */
   --isle-tree: #5ea873;
   --isle-tree-2: #4f9564;
@@ -171,6 +178,8 @@
   --isle-contour-hi: rgba(255, 255, 255, 0.03);
   --isle-path: rgba(255, 232, 180, 0.45);
   --isle-path-under: rgba(0, 0, 0, 0.18);
+  --isle-note: #ece7f7;
+  --isle-note-edge: rgba(0, 0, 0, 0.35);
   --isle-tree: #2e5747;
   --isle-tree-2: #274a3d;
   --isle-tree-hi: #3a6a57;
@@ -263,7 +272,7 @@
   box-shadow: 0 1px var(--color-sonar-dim);
 }
 [class*="animal-switch-"]:not([class*="animal-switch-checked-"]) {
-  background: var(--color-line-2);
+  background: var(--color-switch-off);
 }
 /* Darken primary buttons and active switches in dark mode. */
 [data-theme="dark"] [class*="animal-btn-primary-"]:not([class*="animal-btn-danger-"]) {
@@ -977,6 +986,11 @@ textarea {
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--color-mist);
+}
+/* Wide tracking suits uppercase Latin but pulls Chinese labels apart. */
+:root:lang(zh) .gauge-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
 }
 
 /* Consistent panel scrollbars inside the WebView. */

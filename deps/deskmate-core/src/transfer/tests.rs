@@ -11,8 +11,8 @@ use tokio::sync::{mpsc, watch};
 use crate::identity::DeviceIdentity;
 use crate::transfer::{
     ConflictPolicy, ControlState, IgnoreRules, OfferDecision, ReceiverOptions, TransferError,
-    TransferEvent, collect_files, dedup_path, fetch_avatar, resume_send, sanitize_rel_path,
-    sanitize_rel_path_for, send_files, send_text, spawn_receiver,
+    TransferEvent, TransferOffer, collect_files, dedup_path, fetch_avatar, resume_send,
+    sanitize_rel_path, sanitize_rel_path_for, send_files, send_text, spawn_receiver,
 };
 
 /// Isolated temporary directory removed automatically on drop.
@@ -66,27 +66,7 @@ async fn harness_with(
     avatar_image: Option<Vec<u8>>,
     pin: Option<String>,
 ) -> Harness {
-    let (d_send, d_recv, d_down) = (TempDir::new(), TempDir::new(), TempDir::new());
-    let sender_id = Arc::new(DeviceIdentity::load_or_create(d_send.path()).unwrap());
-    let receiver_id = Arc::new(DeviceIdentity::load_or_create(d_recv.path()).unwrap());
-
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let (offers_tx, mut offers_rx) = mpsc::channel(8);
-    let (events_tx, events_rx) = mpsc::channel(256);
-    let handle = spawn_receiver(
-        Arc::clone(&receiver_id),
-        listener,
-        ReceiverOptions {
-            download_dir: d_down.path().to_path_buf(),
-            avatar_image,
-            resume_dir: d_recv.path().join("resume"),
-            pin,
-        },
-        offers_tx,
-        events_tx,
-    )
-    .unwrap();
-    let target = (IpAddr::V4(Ipv4Addr::LOCALHOST), handle.local_addr().port());
+    let (h, mut offers_rx) = spawn_harness(avatar_image, pin).await;
 
     // The decision task accepts everything or rejects everything.
     tokio::spawn(async move {
@@ -105,8 +85,37 @@ async fn harness_with(
             let _ = offer.reply.send(decision);
         }
     });
+    h
+}
 
-    Harness {
+/// Builds a loopback environment that hands every offer to the caller undecided.
+async fn spawn_harness(
+    avatar_image: Option<Vec<u8>>,
+    pin: Option<String>,
+) -> (Harness, mpsc::Receiver<TransferOffer>) {
+    let (d_send, d_recv, d_down) = (TempDir::new(), TempDir::new(), TempDir::new());
+    let sender_id = Arc::new(DeviceIdentity::load_or_create(d_send.path()).unwrap());
+    let receiver_id = Arc::new(DeviceIdentity::load_or_create(d_recv.path()).unwrap());
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let (offers_tx, offers_rx) = mpsc::channel(8);
+    let (events_tx, events_rx) = mpsc::channel(256);
+    let handle = spawn_receiver(
+        Arc::clone(&receiver_id),
+        listener,
+        ReceiverOptions {
+            download_dir: d_down.path().to_path_buf(),
+            avatar_image,
+            resume_dir: d_recv.path().join("resume"),
+            pin,
+        },
+        offers_tx,
+        events_tx,
+    )
+    .unwrap();
+    let target = (IpAddr::V4(Ipv4Addr::LOCALHOST), handle.local_addr().port());
+
+    let h = Harness {
         sender_id,
         receiver_fp: receiver_id.fingerprint.clone(),
         target,
@@ -114,7 +123,8 @@ async fn harness_with(
         events: events_rx,
         handle,
         _dirs: (d_send, d_recv, d_down),
-    }
+    };
+    (h, offers_rx)
 }
 
 /// Waits up to 10 seconds for an event matching the predicate.
@@ -1170,6 +1180,173 @@ async fn receiver_cancel_settles_sender_as_cancelled() {
         !leftover.iter().any(|n| n.ends_with(super::PART_SUFFIX)),
         "temporary files remain after cancellation: {leftover:?}"
     );
+}
+
+/// Starts a send in the background against the harness receiver.
+fn spawn_send(
+    h: &Harness,
+    control: watch::Receiver<ControlState>,
+) -> (
+    tokio::task::JoinHandle<Result<crate::transfer::SendSummary, TransferError>>,
+    mpsc::Receiver<TransferEvent>,
+    TempDir,
+) {
+    let src = TempDir::new();
+    let file = src.path().join("x.bin");
+    std::fs::write(&file, b"data").unwrap();
+    let (events_tx, events_rx) = mpsc::channel(16);
+    let sender_id = Arc::clone(&h.sender_id);
+    let (fp, target) = (h.receiver_fp.clone(), h.target);
+    let task = tokio::spawn(async move {
+        send_files(
+            &sender_id,
+            &[target.0],
+            target.1,
+            Some(fp),
+            None,
+            None,
+            &[file],
+            false,
+            None,
+            control,
+            events_tx,
+        )
+        .await
+    });
+    (task, events_rx, src)
+}
+
+/// Cancelling while the receiver is still deciding settles the sender at once
+/// and withdraws the offer on the receiver.
+#[tokio::test]
+async fn sender_cancel_withdraws_pending_offer() {
+    let (mut h, mut offers) = spawn_harness(None, None).await;
+    let (control_tx, control) = watch::channel(ControlState::Running);
+    let (send, mut sender_events, _src) = spawn_send(&h, control);
+
+    // Leave the offer undecided, then cancel from the sender side.
+    let offer = tokio::time::timeout(Duration::from_secs(10), offers.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    control_tx.send_replace(ControlState::Cancelled);
+
+    let result = tokio::time::timeout(Duration::from_secs(5), send)
+        .await
+        .expect("sender kept waiting for the decision")
+        .unwrap();
+    assert!(matches!(result, Err(TransferError::Cancelled)));
+    wait_event(&mut sender_events, |e| {
+        matches!(e, TransferEvent::Cancelled { .. })
+    })
+    .await;
+    let ev = wait_event(&mut h.events, |e| {
+        matches!(e, TransferEvent::OfferWithdrawn { .. })
+    })
+    .await;
+    let TransferEvent::OfferWithdrawn { transfer_id } = ev else {
+        panic!("expected OfferWithdrawn");
+    };
+    assert_eq!(transfer_id, offer.transfer_id);
+    // The receiver stopped waiting, so a late answer goes nowhere.
+    assert!(offer.reply.is_closed());
+}
+
+/// A sender that disconnects before the decision also withdraws its offer.
+#[tokio::test]
+async fn sender_disconnect_withdraws_pending_offer() {
+    let (mut h, mut offers) = spawn_harness(None, None).await;
+    let (_control_tx, control) = watch::channel(ControlState::Running);
+    let (send, _sender_events, _src) = spawn_send(&h, control);
+
+    let offer = tokio::time::timeout(Duration::from_secs(10), offers.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    // Dropping the task closes the connection without Cancel or Bye.
+    send.abort();
+
+    let ev = wait_event(&mut h.events, |e| {
+        matches!(e, TransferEvent::OfferWithdrawn { .. })
+    })
+    .await;
+    let TransferEvent::OfferWithdrawn { transfer_id } = ev else {
+        panic!("expected OfferWithdrawn");
+    };
+    assert_eq!(transfer_id, offer.transfer_id);
+}
+
+/// A `Cancel` after acceptance but before any data connection still settles
+/// the receiver's task instead of leaving it waiting.
+#[tokio::test]
+async fn cancel_before_data_settles_accepted_task() {
+    use rustls_pki_types::ServerName;
+    use tokio_rustls::TlsConnector;
+
+    use crate::PROTOCOL_VERSION;
+    use crate::protocol::{ControlMessage, FileMeta, read_frame, write_frame};
+    use crate::tls::client_config;
+
+    let mut h = harness(true).await;
+    let transfer_id = "unstarted-cancel-0001".to_string();
+
+    let config = Arc::new(client_config(&h.sender_id, Some(h.receiver_fp.clone())).unwrap());
+    let tcp = tokio::net::TcpStream::connect(h.target).await.unwrap();
+    let mut ctrl = TlsConnector::from(config)
+        .connect(ServerName::try_from("deskmate").unwrap(), tcp)
+        .await
+        .unwrap();
+    write_frame(
+        &mut ctrl,
+        &ControlMessage::Hello {
+            version: PROTOCOL_VERSION.to_string(),
+            info: h.sender_id.peer_info(),
+        },
+    )
+    .await
+    .unwrap();
+    read_frame(&mut ctrl).await.unwrap();
+    write_frame(
+        &mut ctrl,
+        &ControlMessage::TransferRequest {
+            transfer_id: transfer_id.clone(),
+            files: vec![FileMeta {
+                file_id: 0,
+                rel_path: "never.bin".to_string(),
+                size: 16,
+                inline_image: false,
+            }],
+            total_size: 16,
+            pin: None,
+        },
+    )
+    .await
+    .unwrap();
+    // The harness accepts; cancel before opening the data connection.
+    let resp = read_frame(&mut ctrl).await.unwrap();
+    assert!(matches!(
+        resp,
+        ControlMessage::TransferResponse { ref accepted_files, .. } if !accepted_files.is_empty()
+    ));
+    write_frame(
+        &mut ctrl,
+        &ControlMessage::Cancel {
+            transfer_id: transfer_id.clone(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let ev = wait_event(&mut h.events, |e| {
+        matches!(e, TransferEvent::Cancelled { .. })
+    })
+    .await;
+    let TransferEvent::Cancelled { transfer_id: got } = ev else {
+        panic!("expected Cancelled");
+    };
+    assert_eq!(got, transfer_id);
+    // The task is gone, so a late local cancel finds nothing.
+    assert!(!h.handle.cancel(&transfer_id));
 }
 
 /// Ignore collection supports recursive globs, directory pruning, negation, and top-level filtering.

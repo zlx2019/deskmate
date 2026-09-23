@@ -149,26 +149,30 @@ function HotkeyInput({
   );
 }
 
-/** Panel background selector with presets and custom hex input. It applies and
- * persists immediately in localStorage outside the settings save flow. */
-function PanelColorPicker() {
-  const [color, setColor] = useState(loadPanelColor);
-  // Allow intermediate hex input and apply it as soon as it becomes valid.
-  const [draft, setDraft] = useState(color);
+/** Parses port input and clamps it to the u16 range the backend accepts. */
+function clampPort(input: string): number {
+  return Math.min(65535, Math.max(0, Math.trunc(Number(input)) || 0));
+}
+
+/** Previews a style and panel color without persisting either. */
+function previewLook(mode: StyleMode, panel: string) {
+  applyStyle(mode);
+  // applyStyle restores the stored palette; overlay the unsaved pick.
+  if (mode === "light") applyPanelColor(panel);
+}
+
+/** Panel background selector with presets and custom hex input. */
+function PanelColorPicker({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
+  // Allow intermediate hex input and report it as soon as it becomes valid.
+  const [draft, setDraft] = useState(value);
   const pick = (hex: string) => {
-    setColor(hex);
     setDraft(hex);
-    applyPanelColor(hex);
-    savePanelColor(hex);
+    onChange(hex);
   };
-  const onDraftChange = (value: string) => {
-    setDraft(value);
-    const hex = normalizeHex(value);
-    if (hex) {
-      setColor(hex);
-      applyPanelColor(hex);
-      savePanelColor(hex);
-    }
+  const onDraftChange = (input: string) => {
+    setDraft(input);
+    const hex = normalizeHex(input);
+    if (hex) onChange(hex);
   };
   return (
     <div className="w-fit rounded-2xl border-2 border-line bg-panel-2/40 p-3">
@@ -181,7 +185,7 @@ function PanelColorPicker() {
             aria-label={c}
             title={c}
             className={`size-8 cursor-pointer rounded-full border-2 transition-transform hover:scale-110 ${
-              color === c
+              value === c
                 ? "border-sonar shadow-[0_0_0_2px_rgba(25,200,185,0.3)]"
                 : "border-black/10 shadow-[inset_0_-2px_0_rgba(41,71,51,0.08)]"
             }`}
@@ -192,7 +196,7 @@ function PanelColorPicker() {
       <input
         value={draft}
         onChange={(e) => onDraftChange(e.target.value)}
-        onBlur={() => setDraft(normalizeHex(draft) ?? color)}
+        onBlur={() => setDraft(normalizeHex(draft) ?? value)}
         spellCheck={false}
         className="mt-2.5 w-full rounded-xl border-2 border-line bg-panel px-3 py-1 text-center font-gauge text-xs text-fog outline-none transition-colors focus:border-sonar"
       />
@@ -216,15 +220,35 @@ export function SettingsModal({
   onSaved: () => void;
   onClose: () => void;
 }) {
-  const { t, setLang } = useI18n();
+  const { t, lang, setLang } = useI18n();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [tab, setTab] = useState<TabKey>("general");
   const [tip, setTip] = useState<string | null>(null);
-  // Interface style applies immediately and is stored in localStorage.
+  const [copied, setCopied] = useState(false);
+  // Style, panel color and language preview live; save commits them and
+  // closing without saving restores the look captured at open.
   const [styleMode, setStyleMode] = useState<StyleMode>(loadStyle);
+  const [panelColor, setPanelColor] = useState(loadPanelColor);
+  const [original] = useState(() => ({ style: loadStyle(), lang }));
+  const committed = useRef(false);
   // Local custom-avatar preview Blob URL.
   const [customPreview, setCustomPreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(
+    () => () => {
+      if (committed.current) return;
+      applyStyle(original.style);
+      setLang(original.lang);
+    },
+    [original, setLang],
+  );
+
+  useEffect(() => {
+    if (!copied) return;
+    const id = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(id);
+  }, [copied]);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch(console.error);
@@ -263,6 +287,9 @@ export function SettingsModal({
         // Treat an empty display name as following the hostname.
         displayName: settings.displayName?.trim() ? settings.displayName : null,
       });
+      committed.current = true;
+      saveStyle(styleMode);
+      savePanelColor(panelColor);
       // Saved language changes apply immediately to the UI, tray, and notifications.
       if (settings.language === "zh" || settings.language === "en") {
         setLang(settings.language);
@@ -321,7 +348,10 @@ export function SettingsModal({
                 <ARadio
                   size="small"
                   value={settings.language ?? "zh"}
-                  onChange={(v) => setSettings({ ...settings, language: v as Lang })}
+                  onChange={(v) => {
+                    setSettings({ ...settings, language: v as Lang });
+                    setLang(v as Lang);
+                  }}
                   options={LANGS.map(([value, label]) => ({ label, value }))}
                 />
 
@@ -333,8 +363,7 @@ export function SettingsModal({
                     onChange={(v) => {
                       const mode: StyleMode = v ? "light" : "dark";
                       setStyleMode(mode);
-                      applyStyle(mode);
-                      saveStyle(mode);
+                      previewLook(mode, panelColor);
                     }}
                     checkedChildren="☀️"
                     unCheckedChildren="🌙"
@@ -348,7 +377,13 @@ export function SettingsModal({
                 {styleMode === "light" && (
                   <>
                     <div className="gauge-label mt-4 mb-1">{t.settings.panelColor}</div>
-                    <PanelColorPicker />
+                    <PanelColorPicker
+                      value={panelColor}
+                      onChange={(hex) => {
+                        setPanelColor(hex);
+                        applyPanelColor(hex);
+                      }}
+                    />
                   </>
                 )}
 
@@ -361,7 +396,7 @@ export function SettingsModal({
                     max={65535}
                     value={settings.tcpPort}
                     onChange={(e) =>
-                      setSettings({ ...settings, tcpPort: Number(e.target.value) || 0 })
+                      setSettings({ ...settings, tcpPort: clampPort(e.target.value) })
                     }
                   />
                 </div>
@@ -414,11 +449,17 @@ export function SettingsModal({
                   <div className="px-5 py-4">
                 <div className="gauge-label mb-1">{t.settings.fingerprint}</div>
                 <button
-                  className="w-full cursor-pointer select-text truncate rounded-xl border-2 border-line bg-panel-2 px-3 py-1.5 text-left font-gauge text-[11px] text-mist transition-colors hover:text-fog"
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-xl border-2 border-line bg-panel-2 px-3 py-1.5 text-left font-gauge text-[11px] text-mist transition-colors hover:text-fog"
                   title={t.settings.copyHint}
-                  onClick={() => navigator.clipboard.writeText(fingerprint)}
+                  onClick={() =>
+                    navigator.clipboard
+                      .writeText(fingerprint)
+                      .then(() => setCopied(true))
+                      .catch(console.error)
+                  }
                 >
-                  {fingerprint}
+                  <span className="min-w-0 flex-1 truncate select-text">{fingerprint}</span>
+                  {copied && <span className="shrink-0 font-bold text-sonar">{t.settings.copied}</span>}
                 </button>
 
                 {/* PIN and nickname share one row; full width reads oversized. */}

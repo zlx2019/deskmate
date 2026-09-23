@@ -190,6 +190,8 @@ pub enum ControlMessage {
         transfer_id: String,
     },
     /// Cancels a transfer and causes the receiver to delete temporary `.part` files.
+    ///
+    /// Sent before the `TransferResponse`, it withdraws the pending request.
     Cancel {
         /// Transfer task ID.
         transfer_id: String,

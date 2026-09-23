@@ -91,6 +91,7 @@ export const zh = {
     recvFrom: "来自 ",
     pause: "暂停",
     pausedByPeer: "对方已暂停",
+    awaiting: "等待确认",
     resume: "继续",
     cancel: "取消",
     reveal: "显示",
@@ -158,6 +159,7 @@ export const zh = {
       `${n} 个同名文件将${overwrite ? "被覆盖" : "自动重命名"}`,
     reject: "拒绝",
     accept: "接收",
+    withdrawn: (name: string) => `${name} 取消了发送`,
   },
 
   /** Peer action dialog. */
@@ -193,7 +195,7 @@ export const zh = {
 
   /** Settings dialog. */
   settings: {
-    title: "settings",
+    title: "设置",
     tabs: {
       general: "通用",
       user: "用户",
@@ -227,8 +229,9 @@ export const zh = {
     ignoreRulesPlaceholder: ".DS_Store\nnode_modules/\n*.log",
     autostart: "开机自启",
     notifications: "系统通知",
-    fingerprint: "device fingerprint",
+    fingerprint: "设备指纹",
     copyHint: "点击复制",
+    copied: "已复制",
     nickname: "昵称",
     nicknamePlaceholder: "默认为主机名",
     avatar: "头像",
@@ -251,7 +254,7 @@ export const zh = {
     cancel: "取消",
     save: "保存",
     saved: "设置已保存",
-    aboutSlogan: "局域网文件与文本互传, 无服务端, 点对点加密直连",
+    aboutSlogan: "局域网文件与文本互传",
     aboutCredit: "MIT 开源 · 界面组件来自",
   },
 

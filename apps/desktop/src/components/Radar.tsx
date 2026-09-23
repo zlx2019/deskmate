@@ -8,7 +8,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { Typewriter as ATypewriter } from "animal-island-ui";
 import { useI18n } from "../i18n";
-import { avatarHashOf, type PeerDto, type SelfInfoDto } from "../types";
+import { avatarHashOf, type NoteFlight, type PeerDto, type SelfInfoDto } from "../types";
 import { CX, CY, VIEW_H, VIEW_W } from "./map/geometry";
 import { IslandBackdrop } from "./map/IslandBackdrop";
 import { clearedProps, usePlacedPeers } from "./map/layout";
@@ -263,6 +263,8 @@ interface RadarProps {
   dragging: boolean;
   /** Running transfers by peer; their dots flow along the trails. */
   links: TransferLinks;
+  /** Text-message notes currently flying along trails. */
+  flights: NoteFlight[];
   onPeerClick: (peer: PeerDto) => void;
 }
 
@@ -274,6 +276,7 @@ export const Radar = memo(function Radar({
   dragHover,
   dragging,
   links,
+  flights,
   onPeerClick,
 }: RadarProps) {
   const { t } = useI18n();
@@ -338,7 +341,7 @@ export const Radar = memo(function Radar({
         preserveAspectRatio="xMidYMid meet"
         aria-hidden
       >
-        <Trails placed={placed} links={links} highlight={highlight} />
+        <Trails placed={placed} links={links} flights={flights} highlight={highlight} />
       </svg>
       <PresenceToast peers={peers} />
 

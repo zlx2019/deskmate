@@ -88,7 +88,27 @@ pub async fn send_files(
     // Open the control connection and handshake.
     let (mut ctrl, peer) = connect_and_hello(identity, addrs, port, expected_fp.clone()).await?;
 
-    let accepted = negotiate_offer(&mut ctrl, &transfer_id, files.clone(), total_size, pin).await?;
+    let offer = negotiate_offer(
+        &mut ctrl,
+        &transfer_id,
+        files.clone(),
+        total_size,
+        pin,
+        &control,
+    )
+    .await;
+    let accepted = match offer {
+        Err(TransferError::Cancelled) => {
+            // Report first so the UI settles without waiting for the close below.
+            sink.notify(TransferEvent::Cancelled {
+                transfer_id: transfer_id.clone(),
+            })
+            .await;
+            withdraw_offer(ctrl, &transfer_id).await;
+            return Err(TransferError::Cancelled);
+        }
+        other => other?,
+    };
 
     // Every accepted file starts at offset zero for a new transfer.
     let plan: Vec<SendItem> = files
@@ -147,14 +167,19 @@ fn build_manifest(entries: &[(PathBuf, String, u64)], inline_image: bool) -> Vec
 /// Sends a transfer request and returns the accepted file IDs.
 ///
 /// Uses a long timeout for a human decision. PIN failures and full rejection map
-/// to dedicated errors.
+/// to dedicated errors. A local cancel returns `Cancelled` immediately instead of
+/// waiting for the decision; a pause simply carries over into the data phase.
 async fn negotiate_offer(
     ctrl: &mut TlsStream<TcpStream>,
     transfer_id: &str,
     files: Vec<FileMeta>,
     total_size: u64,
     pin: Option<String>,
+    control: &watch::Receiver<ControlState>,
 ) -> Result<HashSet<u32>, TransferError> {
+    if *control.borrow() == ControlState::Cancelled {
+        return Err(TransferError::Cancelled);
+    }
     write_frame(
         ctrl,
         &ControlMessage::TransferRequest {
@@ -165,9 +190,17 @@ async fn negotiate_offer(
         },
     )
     .await?;
-    let resp = tokio::time::timeout(OFFER_TIMEOUT, read_frame(ctrl))
-        .await
-        .map_err(|_| TransferError::Timeout("receiver decision"))??;
+    // Wait on a clone so the data phase still observes changes it has not seen.
+    // A dropped control sender disables the cancel branch.
+    let mut watch = control.clone();
+    let resp = tokio::select! {
+        resp = tokio::time::timeout(OFFER_TIMEOUT, read_frame(ctrl)) => {
+            resp.map_err(|_| TransferError::Timeout("receiver decision"))??
+        }
+        Ok(_) = watch.wait_for(|s| *s == ControlState::Cancelled) => {
+            return Err(TransferError::Cancelled);
+        }
+    };
     let ControlMessage::TransferResponse {
         accepted_files,
         reason,
@@ -188,6 +221,20 @@ async fn negotiate_offer(
         });
     }
     Ok(accepted_files.into_iter().collect())
+}
+
+/// Withdraws an unanswered request so the receiver can dismiss it, then closes.
+///
+/// Best effort: the peer may already be gone. Older receivers read the `Cancel`
+/// only after their user decides, which then cancels the just-accepted task.
+async fn withdraw_offer(mut ctrl: TlsStream<TcpStream>, transfer_id: &str) {
+    let cancel = ControlMessage::Cancel {
+        transfer_id: transfer_id.to_string(),
+    };
+    if write_frame(&mut ctrl, &cancel).await.is_ok() {
+        let _ = write_frame(&mut ctrl, &ControlMessage::Bye).await;
+    }
+    graceful_close(&mut ctrl).await;
 }
 
 /// Resumes an interrupted task by negotiating offsets and sending only missing ranges.

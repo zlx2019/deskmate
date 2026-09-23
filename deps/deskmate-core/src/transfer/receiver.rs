@@ -543,7 +543,11 @@ async fn control_loop(
             }) => {
                 // PIN is the first gate; invalid requests never reach the confirmation UI.
                 if pin_ok(ctx, &peer.fingerprint, pin.as_deref()) {
-                    handle_request(peer, transfer_id, files, total_size, ctx, out).await
+                    // A withdrawn request needs no response; the sender stopped reading.
+                    match handle_request(peer, transfer_id, files, total_size, ctx, rd, out).await {
+                        Some(reply) => reply,
+                        None => continue,
+                    }
                 } else {
                     ControlMessage::TransferResponse {
                         transfer_id,
@@ -593,8 +597,18 @@ async fn control_loop(
                 continue;
             }
             Ok(ControlMessage::Cancel { transfer_id }) => {
-                // Do not echo peer cancellation; the data session reports final state.
-                cancel_transfer(&ctx.pending, &transfer_id, false);
+                // Do not echo peer cancellation; a running data session reports
+                // the final state, but an accepted task that never started has
+                // nobody else to settle it.
+                let unstarted = lock_pending(&ctx.pending)
+                    .get(&transfer_id)
+                    .is_some_and(|t| !t.active);
+                if cancel_transfer(&ctx.pending, &transfer_id, false) && unstarted {
+                    remove_resume_meta(&ctx.resume_dir, &transfer_id);
+                    ctx.sink
+                        .notify(TransferEvent::Cancelled { transfer_id })
+                        .await;
+                }
                 continue;
             }
             // Peer farewell or disconnection ends the control session normally.
@@ -635,14 +649,18 @@ async fn send_avatar(ctx: &Arc<ReceiverCtx>, out: &mpsc::Sender<Outbound>) -> bo
 }
 
 /// Sends a transfer request for a decision, registers accepted work, and builds a response.
+///
+/// Returns `None` when the sender withdraws the request before the decision; the
+/// upper layer is told through [`TransferEvent::OfferWithdrawn`].
 async fn handle_request(
     peer: &PeerInfo,
     transfer_id: String,
     files: Vec<FileMeta>,
     total_size: u64,
     ctx: &Arc<ReceiverCtx>,
+    rd: &mut ReadHalf<TlsStream<TcpStream>>,
     out: &mpsc::Sender<Outbound>,
-) -> ControlMessage {
+) -> Option<ControlMessage> {
     let reject = |transfer_id: String, reason: &str, code: &str| ControlMessage::TransferResponse {
         transfer_id,
         accepted_files: Vec::new(),
@@ -653,7 +671,11 @@ async fn handle_request(
 
     // The task ID becomes part of a metadata filename, so reject unsafe characters.
     if !is_safe_transfer_id(&transfer_id) {
-        return reject(transfer_id, "invalid transfer task ID", "bad_transfer_id");
+        return Some(reject(
+            transfer_id,
+            "invalid transfer task ID",
+            "bad_transfer_id",
+        ));
     }
 
     let (reply_tx, reply_rx) = oneshot::channel();
@@ -665,10 +687,24 @@ async fn handle_request(
         reply: reply_tx,
     };
     if ctx.offers.send(offer).await.is_err() {
-        return reject(transfer_id, "receiver unavailable", "receiver_unavailable");
+        return Some(reject(
+            transfer_id,
+            "receiver unavailable",
+            "receiver_unavailable",
+        ));
     }
 
-    match tokio::time::timeout(OFFER_TIMEOUT, reply_rx).await {
+    // Watch the sender while the user decides: it may withdraw or disconnect.
+    let decision = tokio::select! {
+        decision = tokio::time::timeout(OFFER_TIMEOUT, reply_rx) => decision,
+        () = sender_withdrew(rd, &transfer_id) => {
+            ctx.sink
+                .notify(TransferEvent::OfferWithdrawn { transfer_id })
+                .await;
+            return None;
+        }
+    };
+    let reply = match decision {
         Ok(Ok(OfferDecision::Accept {
             accepted_files,
             save_dir,
@@ -679,7 +715,11 @@ async fn handle_request(
                 .filter(|id| files.iter().any(|f| f.file_id == *id))
                 .collect();
             if valid.is_empty() {
-                return reject(transfer_id, "no valid files selected", "no_valid_files");
+                return Some(reject(
+                    transfer_id,
+                    "no valid files selected",
+                    "no_valid_files",
+                ));
             }
             let save_dir = save_dir.unwrap_or_else(|| read_lock(&ctx.download_dir).clone());
             register_pending(
@@ -706,6 +746,28 @@ async fn handle_request(
             "receiver decision timed out",
             "decision_timeout",
         ),
+    };
+    Some(reply)
+}
+
+/// Resolves when the sender withdraws its pending request: it cancels this
+/// transfer, says goodbye, or disconnects.
+///
+/// `read_frame` is not cancellation-safe, but a sender sends nothing between its
+/// request and our response except a withdrawal, so dropping this future when
+/// the decision wins cannot lose a frame.
+async fn sender_withdrew(rd: &mut ReadHalf<TlsStream<TcpStream>>, transfer_id: &str) {
+    loop {
+        match read_frame(rd).await {
+            Ok(ControlMessage::Cancel { transfer_id: id }) if id == transfer_id => return,
+            Ok(ControlMessage::Bye) | Err(_) => return,
+            Ok(other) => {
+                tracing::debug!(
+                    kind = other.kind(),
+                    "ignored frame while awaiting a decision"
+                );
+            }
+        }
     }
 }
 

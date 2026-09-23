@@ -7,8 +7,10 @@ import { api } from "../api";
 import { EVENTS } from "../events";
 import { formatErrorCode, getLocale } from "../i18n";
 import {
+  NOTE_FLIGHT_MS,
   avatarBlobUrl,
   avatarHashOf,
+  type NoteFlight,
   type OfferDto,
   type PeerDto,
   type SelfInfoDto,
@@ -28,7 +30,11 @@ type TransferAction =
       peerName: string;
       peerFingerprint: string;
     }
-  | { type: "event"; event: Exclude<TransferEventDto, { kind: "textReceived" }>; at: number }
+  | {
+      type: "event";
+      event: Exclude<TransferEventDto, { kind: "textReceived" | "offerWithdrawn" }>;
+      at: number;
+    }
   // Local pause and resume state; peer state arrives through engine events.
   | { type: "setPaused"; transferId: string; paused: boolean };
 
@@ -80,6 +86,8 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
         peerName,
         peerFingerprint,
         status: "active",
+        // Receives begin after the local accept; only sends wait on the peer.
+        awaiting: direction === "send",
         currentFile: getLocale().transfer.waitingResponse,
         done: 0,
         size: 0,
@@ -140,6 +148,7 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
       next = {
         ...prev,
         status: prev.status === "paused" ? "paused" : "active",
+        awaiting: false,
         currentFile: ev.relPath,
         done: ev.done,
         size: ev.size,
@@ -204,6 +213,10 @@ function makeTransferReducer(speedSamples: SpeedSamples) {
       next = { ...prev, pausedByPeer: false, status: runningStatus(prev.pausedLocal, false) };
       break;
   }
+  // Ending before the peer answered leaves no file to show; drop the placeholder.
+  if (prev.awaiting && next.status !== "active" && next.status !== "paused") {
+    next = { ...next, awaiting: false, currentFile: "" };
+  }
   return { ...state, [ev.transferId]: next };
   };
 }
@@ -258,6 +271,15 @@ export function useDeskmate() {
     pinCache.current.set(fingerprint, pin);
   }, []);
 
+  // Text messages briefly fly a note along the peer's map trail.
+  const [flights, setFlights] = useState<NoteFlight[]>([]);
+  /** Launches a note along a trail and drops it once the flight has played. */
+  const flyNote = useCallback((fingerprint: string, direction: NoteFlight["direction"]) => {
+    const id = msgId();
+    setFlights((prev) => [...prev, { id, fingerprint, direction }]);
+    setTimeout(() => setFlights((prev) => prev.filter((f) => f.id !== id)), NOTE_FLIGHT_MS + 200);
+  }, []);
+
   /** Loads avatar bytes into a Blob URL; self reads the local custom-avatar file. */
   const loadAvatar = (hash: string | null, isSelf = false) => {
     if (!hash || avatarSeen.current.has(hash)) return;
@@ -305,14 +327,16 @@ export function useDeskmate() {
     );
     // Automatic trusted-device acceptance creates a receive entry without a dialog.
     add(
-      listen<{ transferId: string; peerName: string }>(EVENTS.TRANSFER_AUTOSTART, (e) =>
-        dispatch({
-          type: "begin",
-          transferId: e.payload.transferId,
-          direction: "recv",
-          peerName: e.payload.peerName,
-          peerFingerprint: "",
-        }),
+      listen<{ transferId: string; peerName: string; peerFingerprint: string }>(
+        EVENTS.TRANSFER_AUTOSTART,
+        (e) =>
+          dispatch({
+            type: "begin",
+            transferId: e.payload.transferId,
+            direction: "recv",
+            peerName: e.payload.peerName,
+            peerFingerprint: e.payload.peerFingerprint,
+          }),
       ),
     );
     add(
@@ -329,6 +353,7 @@ export function useDeskmate() {
       listen<TransferEventDto>(EVENTS.TRANSFER_EVENT, (e) => {
         const ev = e.payload;
         if (ev.kind === "textReceived") {
+          flyNote(ev.fromFingerprint, "recv");
           setTexts((prev) =>
             pushMsg(prev, {
               id: msgId(),
@@ -338,6 +363,16 @@ export function useDeskmate() {
               at: Date.now(),
             }),
           );
+        } else if (ev.kind === "offerWithdrawn") {
+          // The sender cancelled before anyone answered; close its dialog.
+          const offer = offersRef.current.find((o) => o.transferId === ev.transferId);
+          setOffers((prev) => prev.filter((o) => o.transferId !== ev.transferId));
+          if (offer) {
+            ANotification.info({
+              key: ev.transferId,
+              message: getLocale().offer.withdrawn(offer.peerName),
+            });
+          }
         } else {
           // Received clipboard images additionally surface as chat bubbles.
           // The path was authorized by the event pump; failures degrade to the
@@ -522,18 +557,39 @@ export function useDeskmate() {
       .catch(console.error);
   }, []);
 
-  /** Records successfully sent text in the message stream. */
-  const addSentText = useCallback((peerName: string, text: string) => {
-    setTexts((prev) =>
-      pushMsg(prev, {
-        id: msgId(),
-        direction: "out",
-        peerName,
-        text,
-        at: Date.now(),
-      }),
-    );
+  /** Retries a PIN-gated send under its original ID; the entry waits for the
+   * peer again, so it regains the cancel action. */
+  const retrySend = useCallback((item: TransferItem, pin: string) => {
+    api
+      .retrySend(item.transferId, pin)
+      .then(() =>
+        dispatch({
+          type: "begin",
+          transferId: item.transferId,
+          direction: "send",
+          peerName: item.peerName,
+          peerFingerprint: item.peerFingerprint,
+        }),
+      )
+      .catch(console.error);
   }, []);
+
+  /** Records successfully sent text in the message stream and on the map. */
+  const addSentText = useCallback(
+    (peer: PeerDto, text: string) => {
+      flyNote(peer.fingerprint, "send");
+      setTexts((prev) =>
+        pushMsg(prev, {
+          id: msgId(),
+          direction: "out",
+          peerName: peer.name,
+          text,
+          at: Date.now(),
+        }),
+      );
+    },
+    [flyNote],
+  );
 
   /** Records a successfully sent clipboard image as an outgoing chat bubble. */
   const addSentImage = useCallback((peerName: string, name: string, bytes: Uint8Array) => {
@@ -582,12 +638,14 @@ export function useDeskmate() {
     offers,
     texts,
     transfers,
+    flights,
     avatarSrcs,
     sendFiles,
     sendClipboardImage,
     respondOffer,
     pauseTransfer,
     resumeTransfer,
+    retrySend,
     getPin,
     rememberPin,
     addSentText,
